@@ -1,0 +1,25 @@
+course,campus,spring_projected_seats,sections,method
+FOUN 110,Savannah,92.00,5,sequencing_total_counts
+FOUN 111,Savannah,154.00,8,sequencing_total_counts
+FOUN 112,Savannah,598.00,30,sequencing_total_counts
+FOUN 113,Savannah,683.00,35,sequencing_total_counts
+FOUN 220,Savannah,187.00,10,sequencing_total_counts
+FOUN 230,Savannah,116.00,6,sequencing_total_counts
+FOUN 240,Savannah,16.00,1,sequencing_total_counts
+FOUN 245,Savannah,159.00,8,sequencing_total_counts
+FOUN 250,Savannah,0.00,0,sequencing_total_counts
+FOUN 251,Savannah,0.00,0,sequencing_total_counts
+FOUN 260,Savannah,0.00,0,sequencing_total_counts
+FOUN 320,Savannah,0.00,0,sequencing_total_counts
+FOUN 110,SCADnow,10.21,1,scaled_from_fall_winter_vs_sav
+FOUN 111,SCADnow,15.84,1,scaled_from_fall_winter_vs_sav
+FOUN 112,SCADnow,63.73,4,scaled_from_fall_winter_vs_sav
+FOUN 113,SCADnow,152.96,8,scaled_from_fall_winter_vs_sav
+FOUN 220,SCADnow,16.56,1,scaled_from_fall_winter_vs_sav
+FOUN 230,SCADnow,21.80,2,scaled_from_fall_winter_vs_sav
+FOUN 240,SCADnow,2.46,1,scaled_from_fall_winter_vs_sav
+FOUN 245,SCADnow,26.96,2,scaled_from_fall_winter_vs_sav
+FOUN 250,SCADnow,0.00,0,scaled_from_fall_winter_vs_sav
+FOUN 251,SCADnow,0.00,0,scaled_from_fall_winter_vs_sav
+FOUN 260,SCADnow,0.00,0,scaled_from_fall_winter_vs_sav
+FOUN 320,SCADnow,0.00,0,scaled_from_fall_winter_vs_sav

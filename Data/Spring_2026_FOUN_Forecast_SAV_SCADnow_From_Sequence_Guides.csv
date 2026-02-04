@@ -1,0 +1,16 @@
+course,campus,spring_projected_seats,sections,method
+FOUN 111,Savannah,80.50,5,sequence_map_fall_winter_mapping
+FOUN 112,Savannah,630.35,32,sequence_map_fall_winter_mapping
+FOUN 113,Savannah,1338.84,67,sequence_map_fall_winter_mapping
+FOUN 220,Savannah,1226.65,62,sequence_map_fall_winter_mapping
+FOUN 230,Savannah,281.16,15,sequence_map_fall_winter_mapping
+FOUN 240,Savannah,214.15,11,sequence_map_fall_winter_mapping
+FOUN 245,Savannah,358.05,18,sequence_map_fall_winter_mapping
+FOUN 250,Savannah,67.01,4,sequence_map_fall_winter_mapping
+FOUN 251,Savannah,200.94,11,sequence_map_fall_winter_mapping
+FOUN 260,Savannah,289.93,15,sequence_map_fall_winter_mapping
+FOUN 112,SCADnow,30.32,2,sequence_map_fall_winter_mapping
+FOUN 113,SCADnow,208.94,11,sequence_map_fall_winter_mapping
+FOUN 220,SCADnow,77.51,4,sequence_map_fall_winter_mapping
+FOUN 251,SCADnow,0.00,0,sequence_map_fall_winter_mapping
+FOUN 260,SCADnow,47.83,3,sequence_map_fall_winter_mapping

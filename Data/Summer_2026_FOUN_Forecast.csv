@@ -1,0 +1,15 @@
+course,campus,spring_projected_seats,summer_ratio,summer_projected_seats,sections_needed,ratio_source
+FOUN 111,Savannah,80.5,0.12,9.66,1,default
+FOUN 112,Savannah,630.35,0.12,75.64,4,default
+FOUN 113,Savannah,1338.84,0.12,160.66,9,default
+FOUN 220,Savannah,1226.65,0.12,147.2,8,default
+FOUN 230,Savannah,281.16,0.12,33.74,2,default
+FOUN 240,Savannah,214.15,0.12,25.7,2,default
+FOUN 245,Savannah,358.05,0.12,42.97,3,default
+FOUN 250,Savannah,67.01,0.12,8.04,1,default
+FOUN 251,Savannah,200.94,0.12,24.11,2,default
+FOUN 260,Savannah,289.93,0.12,34.79,2,default
+FOUN 112,SCADnow,30.32,0.12,3.64,1,default
+FOUN 113,SCADnow,208.94,0.12,25.07,2,default
+FOUN 220,SCADnow,77.51,0.12,9.3,1,default
+FOUN 260,SCADnow,47.83,0.12,5.74,1,default

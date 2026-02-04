@@ -1,0 +1,10 @@
+{
+  "sequence_map": "Data/FOUN_sequencing_map_by_major.csv",
+  "spring_enroll": "Data/Master Schedule of Classes.csv",
+  "summer_enroll": "Data/Master Schedule of Classes.csv",
+  "spring_term_code": "202630",
+  "summer_term_code": "202640",
+  "output": "Data/Fall_2026_FOUN_Forecast_SAV_SCADnow_From_Sequence_Guides.csv",
+  "capacity": 20,
+  "progression_rate": 0.95
+}

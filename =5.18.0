@@ -1,0 +1,11 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting plotly
+  Downloading plotly-6.5.2-py3-none-any.whl (9.9 MB)
+Requirement already satisfied: narwhals>=1.15.1 in /Users/nmadrid/Library/Python/3.9/lib/python/site-packages (from plotly) (2.15.0)
+Requirement already satisfied: packaging in /Users/nmadrid/Library/Python/3.9/lib/python/site-packages (from plotly) (25.0)
+Installing collected packages: plotly
+  WARNING: The script plotly_get_chrome is installed in '/Users/nmadrid/Library/Python/3.9/bin' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+Successfully installed plotly-6.5.2
+WARNING: You are using pip version 21.2.4; however, version 25.3 is available.
+You should consider upgrading via the '/Library/Developer/CommandLineTools/usr/bin/python3 -m pip install --upgrade pip' command.
