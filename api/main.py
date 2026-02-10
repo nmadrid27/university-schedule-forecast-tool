@@ -14,6 +14,7 @@ from datetime import datetime
 
 from forecaster import (
     run_sequence_forecast,
+    run_ratio_forecast,
     load_previous_forecast,
     get_available_terms,
     term_code_to_label,
@@ -266,6 +267,41 @@ def run_forecast(request: ForecastRequest):
             buffer_percent=buffer_percent,
         )
 
+        # Fallback: if sequence-based returned no results (e.g. Summer has
+        # no sequencing data), try the ratio-based method using the closest
+        # feeder quarter's existing forecast output.
+        method_label = "Sequence-based"
+        if not rows:
+            info = resolve_term_info(target_term)
+            feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
+            feeder_parts = target_term.strip().split()
+            feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else "2026"
+            # Look for the feeder quarter's forecast CSV
+            feeder_pattern = f"{feeder_quarter}_{feeder_year}_FOUN_Forecast*.csv"
+            feeder_csvs = sorted(DATA_DIR.glob(feeder_pattern))
+            historical_path = DATA_DIR / "FOUN_Historical.csv"
+            if feeder_csvs:
+                # Prefer the Sequence Guides output (most reliable),
+                # then try others until one has compatible columns.
+                preferred = [
+                    p for p in feeder_csvs
+                    if "Sequence_Guides" in p.name or "sequence_guides" in p.name
+                ]
+                candidates = preferred + [
+                    p for p in reversed(feeder_csvs) if p not in preferred
+                ]
+                for csv_path in candidates:
+                    rows = run_ratio_forecast(
+                        feeder_forecast_path=csv_path,
+                        historical_data_path=historical_path,
+                        target_term=target_term,
+                        capacity=capacity,
+                        buffer_percent=buffer_percent,
+                    )
+                    if rows:
+                        method_label = "Ratio-based"
+                        break
+
         # Load previous forecast for change comparison (best-effort)
         previous: Dict = {}
         for pattern in [
@@ -308,7 +344,7 @@ def run_forecast(request: ForecastRequest):
                 totalStudents=total_students,
                 totalSections=total_sections,
                 coursesForecasted=len(set(r.course for r in results)),
-                method="Sequence-based",
+                method=method_label,
             ),
         )
     except FileNotFoundError:
@@ -372,6 +408,28 @@ def list_terms():
                             forecastable.append(TermOption(termCode=candidate, label=label))
                     except (ValueError, KeyError):
                         continue
+
+        # Also check terms forecastable via the ratio method: if a forecast
+        # CSV exists for the closer feeder quarter, the target is forecastable.
+        forecastable_codes = {t.termCode for t in forecastable}
+        quarter_labels = {"10": "Fall", "20": "Winter", "30": "Spring", "40": "Summer"}
+        for qq_target, qq_label in quarter_labels.items():
+            for acad_year in [max_acad, max_acad + 1] if term_codes else []:
+                candidate = str(acad_year) + qq_target
+                if candidate in forecastable_codes:
+                    continue
+                label = term_code_to_label(candidate)
+                try:
+                    info = resolve_term_info(label)
+                except (ValueError, KeyError):
+                    continue
+                feeder_q = info["closer_feeder"]["quarter"].capitalize()
+                # Determine feeder calendar year
+                feeder_parts = label.split()
+                feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else ""
+                pattern = f"{feeder_q}_{feeder_year}_FOUN_Forecast*.csv"
+                if list(DATA_DIR.glob(pattern)):
+                    forecastable.append(TermOption(termCode=candidate, label=label))
 
         # Deduplicate and sort forecastable
         seen = set()

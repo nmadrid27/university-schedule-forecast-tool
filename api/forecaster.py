@@ -426,6 +426,131 @@ def run_sequence_forecast(
     return output_rows
 
 
+def _compute_historical_ratios(
+    historical_path: Path,
+    target_quarter_code: str,
+    feeder_quarter_code: str,
+) -> Dict[str, float]:
+    """Compute average target/feeder enrollment ratios per course from historical data.
+
+    Quarter codes: "10"=Fall, "20"=Winter, "30"=Spring, "40"=Summer.
+    Returns {course: ratio}.
+    """
+    # Collect per-course, per-academic-year enrollment totals for each quarter
+    # Structure: {course: {acad_year: {quarter_code: total_enrollment}}}
+    data: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+
+    if not historical_path.is_file():
+        return {}
+
+    with historical_path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            subj = (row.get("SUBJ") or "").strip().upper()
+            crs = (row.get("CRS NUMBER") or "").strip()
+            if not subj.startswith("FOUN") or not crs:
+                continue
+            course = f"{subj} {crs}"
+            term_str = str(row.get("TERM") or "").strip()
+            if len(term_str) != 6:
+                continue
+            acad_year = term_str[:4]
+            qq = term_str[4:]
+            enrollment = parse_number(row.get("ACT ENR"))
+            data[course][acad_year][qq] += enrollment
+
+    ratios: Dict[str, float] = {}
+    for course, by_year in data.items():
+        year_ratios = []
+        for acad_year, by_qq in by_year.items():
+            feeder_enr = by_qq.get(feeder_quarter_code, 0.0)
+            target_enr = by_qq.get(target_quarter_code, 0.0)
+            if feeder_enr > 0 and target_enr > 0:
+                year_ratios.append(target_enr / feeder_enr)
+        if year_ratios:
+            ratios[course] = sum(year_ratios) / len(year_ratios)
+
+    return ratios
+
+
+def run_ratio_forecast(
+    feeder_forecast_path: Path,
+    historical_data_path: Path,
+    target_term: str,
+    capacity: int = 20,
+    buffer_percent: float = 0.0,
+    default_ratio: float = 0.12,
+) -> List[Dict]:
+    """Ratio-based forecast: apply historical target/feeder ratios to a prior forecast.
+
+    Used when the sequence map lacks data for the target quarter (e.g. Summer).
+    Reads an existing forecast CSV (e.g. Spring 2026) and scales seats by
+    the historical ratio of target-quarter to feeder-quarter enrollment.
+
+    Args:
+        feeder_forecast_path: Path to the feeder term's forecast CSV
+            (must have columns: course, campus, and a *_projected_seats column).
+        historical_data_path: Path to FOUN_Historical.csv for ratio computation.
+        target_term: Human-readable term, e.g. "Summer 2026".
+        capacity: Section capacity.
+        buffer_percent: Buffer percentage to add.
+        default_ratio: Fallback ratio when historical data is insufficient.
+
+    Returns list of dicts matching run_sequence_forecast output format.
+    """
+    info = resolve_term_info(target_term)
+    target_qq = str(QUARTER_CODES[info["target_quarter"]])
+    feeder_qq = str(QUARTER_CODES[info["closer_feeder"]["quarter"]])
+
+    # Compute per-course historical ratios
+    historical_ratios = _compute_historical_ratios(
+        historical_data_path, target_qq, feeder_qq
+    )
+
+    # Load the feeder forecast CSV
+    feeder_data: List[Tuple[str, str, float]] = []
+    if not feeder_forecast_path.is_file():
+        return []
+
+    with feeder_forecast_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        # Find the projected_seats column (varies by CSV naming)
+        seats_col = None
+        for col in fieldnames:
+            if col == "projected_seats" or col.endswith("_projected_seats"):
+                seats_col = col
+                break
+        if seats_col is None and "sections" in fieldnames:
+            # Fall back: no projected_seats column found
+            return []
+
+        for row in reader:
+            course = (row.get("course") or "").strip()
+            campus = (row.get("campus") or "").strip()
+            seats = parse_number(row.get(seats_col)) if seats_col else 0.0
+            if course and campus and seats > 0:
+                feeder_data.append((course, campus, seats))
+
+    buffer_multiplier = 1.0 + (buffer_percent / 100.0)
+    output_rows: List[Dict] = []
+
+    for course, campus, feeder_seats in feeder_data:
+        ratio = historical_ratios.get(course, default_ratio)
+        projected = feeder_seats * ratio * buffer_multiplier
+        sections = compute_sections(projected, capacity)
+        if sections > 0:
+            output_rows.append({
+                "course": course,
+                "campus": campus,
+                "projected_seats": projected,
+                "sections": sections,
+                "method": "ratio_based",
+            })
+
+    return output_rows
+
+
 def load_previous_forecast(csv_path: Path) -> Dict[Tuple[str, str], float]:
     """Read an existing forecast CSV to compute change deltas.
 
