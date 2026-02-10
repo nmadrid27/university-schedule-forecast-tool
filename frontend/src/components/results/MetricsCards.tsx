@@ -11,7 +11,7 @@ export function MetricsCards({ summary }: MetricsCardsProps) {
     const metrics = [
         {
             label: 'Total Students',
-            value: summary.totalStudents.toLocaleString(),
+            value: Math.round(summary.totalStudents).toLocaleString(),
             icon: '👥',
             trend: '+5%',
             trendUp: true,

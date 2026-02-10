@@ -32,7 +32,7 @@ export function DataTable({ data }: DataTableProps) {
                         <TableRow key={`${row.course}-${row.campus}-${index}`}>
                             <TableCell className="font-medium">{row.course}</TableCell>
                             <TableCell className="text-muted-foreground">{row.campus}</TableCell>
-                            <TableCell className="text-right">{row.projectedSeats}</TableCell>
+                            <TableCell className="text-right">{Math.round(row.projectedSeats)}</TableCell>
                             <TableCell className="text-right">{row.sections}</TableCell>
                             <TableCell className="text-right">
                                 {row.changePercent !== undefined ? (

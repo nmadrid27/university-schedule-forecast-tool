@@ -11,9 +11,11 @@ import { ForecastResult, ForecastSummary } from '@/lib/types';
 interface ResultsPanelProps {
     results: ForecastResult[] | null;
     summary: ForecastSummary | null;
+    onDownload?: () => void;
+    onCompare?: () => void;
 }
 
-export function ResultsPanel({ results, summary }: ResultsPanelProps) {
+export function ResultsPanel({ results, summary, onDownload, onCompare }: ResultsPanelProps) {
     // Empty state
     if (!results || !summary) {
         return (
@@ -29,7 +31,7 @@ export function ResultsPanel({ results, summary }: ResultsPanelProps) {
                         <div className="text-6xl mb-4">📊</div>
                         <h3 className="text-lg font-medium mb-2">No Forecast Yet</h3>
                         <p className="text-sm text-muted-foreground">
-                            Ask me to &quot;Forecast Spring 2026&quot; to see enrollment projections here.
+                            Ask me to &quot;Forecast a term&quot; or select one from the sidebar to see enrollment projections here.
                         </p>
                     </div>
                 </div>
@@ -58,11 +60,11 @@ export function ResultsPanel({ results, summary }: ResultsPanelProps) {
                         </p>
                     </div>
                     <div className="flex gap-2">
-                        <Button variant="outline" size="sm">
+                        <Button variant="outline" size="sm" onClick={onDownload} disabled={!onDownload}>
                             <DownloadIcon className="h-4 w-4 mr-1" />
                             CSV
                         </Button>
-                        <Button variant="outline" size="sm">
+                        <Button variant="outline" size="sm" onClick={onCompare} disabled={!onCompare}>
                             Compare
                         </Button>
                     </div>

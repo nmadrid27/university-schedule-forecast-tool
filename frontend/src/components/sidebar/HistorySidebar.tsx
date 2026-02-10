@@ -14,10 +14,11 @@ interface Conversation {
 
 interface HistorySidebarProps {
     onNewChat: () => void;
+    onSelectConversation?: (id: string) => void;
     isCollapsed?: boolean;
 }
 
-export function HistorySidebar({ onNewChat, isCollapsed = false }: HistorySidebarProps) {
+export function HistorySidebar({ onNewChat, onSelectConversation, isCollapsed = false }: HistorySidebarProps) {
     const [conversations] = useState<Conversation[]>([
         { id: '1', title: 'Spring 2026 Forecast', date: 'Today', active: true },
         { id: '2', title: 'Data Analysis Q3', date: 'Today' },
@@ -63,10 +64,13 @@ export function HistorySidebar({ onNewChat, isCollapsed = false }: HistorySideba
                         {convs.map((conv) => (
                             <button
                                 key={conv.id}
+                                onClick={() => onSelectConversation?.(conv.id)}
                                 className={`w-full text-left px-3 py-2 rounded-md text-sm truncate transition-colors ${conv.active
                                         ? 'bg-accent text-accent-foreground'
                                         : 'hover:bg-muted/50 text-muted-foreground'
                                     }`}
+                                aria-label={`Select conversation: ${conv.title}`}
+                                aria-current={conv.active ? 'page' : undefined}
                             >
                                 {conv.title}
                             </button>

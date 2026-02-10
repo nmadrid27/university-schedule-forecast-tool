@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { ChatWindow } from '@/components/chat';
 import { ResultsPanel } from '@/components/results';
 import { HistorySidebar, ConfigSidebar } from '@/components/sidebar';
@@ -8,10 +8,7 @@ import { useChat } from '@/hooks/useChat';
 import { ForecastConfig } from '@/lib/types';
 
 export default function Home() {
-  const { messages, isLoading, sendMessage, clearMessages, forecastResults, forecastSummary } = useChat();
-
-  const [showConfig, setShowConfig] = useState(true);
-  const [config] = useState<ForecastConfig>({
+  const [config, setConfig] = useState<ForecastConfig>({
     capacity: 20,
     progressionRate: 0.95,
     bufferPercent: 10,
@@ -19,9 +16,47 @@ export default function Home() {
     term: 'Spring 2026',
   });
 
+  const { messages, isLoading, sendMessage, clearMessages, forecastResults, forecastSummary } = useChat(config);
+
+  const [showConfig] = useState(true);
+
+  const handleConfigChange = useCallback((partial: Partial<ForecastConfig>) => {
+    setConfig((prev) => ({ ...prev, ...partial }));
+  }, []);
+
   const handleNewChat = () => {
     clearMessages();
   };
+
+  const handleDownload = useCallback(() => {
+    if (!forecastResults) return;
+    // Create CSV content
+    const headers = ['Course', 'Campus', 'Projected Seats', 'Sections', 'Change %'];
+    const rows = forecastResults.map(r => [
+      r.course,
+      r.campus,
+      r.projectedSeats.toString(),
+      r.sections.toString(),
+      r.changePercent !== undefined ? `${r.changePercent}%` : 'N/A'
+    ]);
+    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+
+    // Create download link
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `forecast_${config.term.replace(/\s+/g, '_').toLowerCase()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [forecastResults, config.term]);
+
+  const handleCompare = useCallback(() => {
+    // TODO: Implement compare functionality
+    console.log('Compare feature not yet implemented');
+  }, []);
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -44,13 +79,22 @@ export default function Home() {
           <ResultsPanel
             results={forecastResults}
             summary={forecastSummary}
+            onDownload={handleDownload}
+            onCompare={handleCompare}
           />
         </div>
       </div>
 
       {/* Right Sidebar - Config */}
       {showConfig && (
-        <ConfigSidebar config={config} />
+        <ConfigSidebar
+          config={config}
+          onConfigChange={handleConfigChange}
+          onToggleCollapse={() => {
+            // TODO: Add a way to re-open the sidebar
+            console.log('Config sidebar collapsed');
+          }}
+        />
       )}
     </div>
   );

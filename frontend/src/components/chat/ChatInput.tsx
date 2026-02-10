@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef, useEffect, KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, KeyboardEvent, FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 interface ChatInputProps {
     onSend: (message: string) => void;
@@ -16,44 +16,59 @@ export function ChatInput({
     placeholder = 'Ask me anything about forecasting...',
 }: ChatInputProps) {
     const [value, setValue] = useState('');
-    const inputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     // Focus input on mount
     useEffect(() => {
-        inputRef.current?.focus();
+        textareaRef.current?.focus();
     }, []);
 
     const handleSend = () => {
         if (value.trim() && !isLoading) {
             onSend(value.trim());
             setValue('');
+            // Reset textarea height
+            if (textareaRef.current) {
+                textareaRef.current.style.height = 'auto';
+            }
         }
     };
 
-    const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSend();
         }
     };
 
+    const handleInput = (e: FormEvent<HTMLTextAreaElement>) => {
+        const target = e.currentTarget;
+        setValue(target.value);
+
+        // Auto-resize textarea
+        target.style.height = 'auto';
+        target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
+    };
+
     return (
         <div className="border-t border-border bg-background p-4">
             <div className="flex gap-2 max-w-3xl mx-auto">
-                <Input
-                    ref={inputRef}
+                <Textarea
+                    ref={textareaRef}
                     value={value}
-                    onChange={(e) => setValue(e.target.value)}
+                    onInput={handleInput}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={isLoading}
-                    className="flex-1 bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-ring"
+                    className="flex-1 bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-ring min-h-[44px] max-h-[200px] resize-none"
+                    rows={1}
                 />
                 <Button
                     onClick={handleSend}
                     disabled={!value.trim() || isLoading}
                     size="icon"
-                    className="shrink-0"
+                    className="shrink-0 self-end"
+                    aria-label="Send message"
                 >
                     {isLoading ? (
                         <LoadingSpinner />

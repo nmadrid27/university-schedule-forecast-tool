@@ -51,6 +51,11 @@ export interface ChatResponse {
   summary?: ForecastSummary;
 }
 
+export interface TermOption {
+  termCode: string;
+  label: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;

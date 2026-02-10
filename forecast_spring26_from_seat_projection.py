@@ -143,17 +143,24 @@ def extract_foun_totals(path: Path, sheet_name: str) -> Dict[str, float]:
 
 def load_term_enrollments(path: Path) -> Dict[Tuple[str, str], float]:
     totals: Dict[Tuple[str, str], float] = defaultdict(float)
-    with path.open(newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            course = (row.get("Course") or "").strip()
-            if not course.startswith("FOUN "):
-                continue
-            enrollment = parse_float(row.get("Enrollment"))
-            room = (row.get("Room") or "").strip().upper()
-            section = (row.get("Section #") or "").strip().upper()
-            campus = "SCADnow" if (room == "OLNOW" or section.startswith("N")) else "SAV"
-            totals[(campus, course)] += enrollment
+    try:
+        with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                course = (row.get("Course") or "").strip()
+                if not course.startswith("FOUN "):
+                    continue
+                enrollment = parse_float(row.get("Enrollment"))
+                room = (row.get("Room") or "").strip().upper()
+                section = (row.get("Section #") or "").strip().upper()
+                campus = "SCADNOW" if (room == "OLNOW" or section.startswith("N")) else "SAVANNAH"
+                totals[(campus, course)] += enrollment
+    except FileNotFoundError:
+        print(f"Warning: File not found: {path}")
+        return {}
+    except Exception as e:
+        print(f"Error reading {path}: {e}")
+        return {}
     return totals
 
 
@@ -164,9 +171,18 @@ def compute_sections(seats: float, capacity: int) -> int:
 
 
 def main() -> int:
-    sav_spring = extract_foun_totals(SEQUENCE_PATH, "Spring 2026 SAV")
+    try:
+        sav_spring = extract_foun_totals(SEQUENCE_PATH, "Spring 2026 SAV")
+    except FileNotFoundError:
+        print(f"Error: Sequencing file not found: {SEQUENCE_PATH}")
+        return 1
+    except Exception as e:
+        print(f"Error reading sequencing file: {e}")
+        return 1
+
     if not sav_spring:
-        raise SystemExit("No SAV totals found in sequencing guide.")
+        print("Warning: No SAV totals found in sequencing guide.")
+        sav_spring = {}
 
     fall_totals = load_term_enrollments(FALL_ENROLL_PATH)
     winter_totals = load_term_enrollments(WINTER_ENROLL_PATH)
@@ -203,7 +219,7 @@ def main() -> int:
         )
 
     for course in courses:
-        scad_fall_winter = combined.get(("SCADnow", course), 0.0)
+        scad_fall_winter = combined.get(("SCADNOW", course), 0.0)
         ratio = course_ratios.get(course, overall_ratio)
         scad_seats = scad_fall_winter * ratio
         output_rows.append(

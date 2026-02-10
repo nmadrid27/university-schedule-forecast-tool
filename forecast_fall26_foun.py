@@ -1,8 +1,10 @@
+#!/usr/bin/env python3
 """
 Fall 2026 FOUN Forecast
 Uses Spring 2026 projections and historical Fall/Spring ratios
 """
 
+import sys
 import pandas as pd
 import numpy as np
 
@@ -19,8 +21,15 @@ print("=" * 60)
 
 # Load Spring 2026 forecast
 print(f"\n1. Loading Spring 2026 forecast from: {SPRING_FORECAST}")
-spring_forecast = pd.read_csv(SPRING_FORECAST)
-print(f"   Found {len(spring_forecast)} course/campus combinations")
+try:
+    spring_forecast = pd.read_csv(SPRING_FORECAST)
+    print(f"   Found {len(spring_forecast)} course/campus combinations")
+except FileNotFoundError:
+    print(f"   Error: File not found: {SPRING_FORECAST}")
+    sys.exit(1)
+except Exception as e:
+    print(f"   Error loading forecast: {e}")
+    sys.exit(1)
 
 # Load historical data to calculate Fall/Spring ratios
 print(f"\n2. Loading historical data from: {HISTORICAL_DATA}")
@@ -142,8 +151,12 @@ for _, row in campus_summary.iterrows():
 
 # Save to CSV
 print(f"\n6. Saving forecast to: {OUTPUT_FILE}")
-df_forecast.to_csv(OUTPUT_FILE, index=False)
-print(f"   ✓ Saved {len(df_forecast)} course/campus forecasts")
+try:
+    df_forecast.to_csv(OUTPUT_FILE, index=False)
+    print(f"   ✓ Saved {len(df_forecast)} course/campus forecasts")
+except Exception as e:
+    print(f"   Error saving forecast: {e}")
+    sys.exit(1)
 
 print("\n" + "=" * 60)
 print("Fall 2026 FOUN Forecast Complete!")

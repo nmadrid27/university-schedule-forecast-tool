@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Off-sequence forecast using Fall/Winter cohort scaling."""
+
 import pandas as pd
 import math
 
@@ -10,14 +13,17 @@ try:
     # 202310 = Fall 2022
     # 202410 = Fall 2023
     # 202510 = Fall 2024
-    
+
     # Let's check 202510 for DRAW 100 / DSGN 100
     fall24_draw100 = df_hist[(df_hist['SUBJ'] == 'DRAW') & (df_hist['CRS NUMBER'] == 100) & (df_hist['TERM'] == 202510)]['ACT ENR'].sum()
     fall24_dsgn100 = df_hist[(df_hist['SUBJ'] == 'DSGN') & (df_hist['CRS NUMBER'] == 100) & (df_hist['TERM'] == 202510)]['ACT ENR'].sum()
-    
+
     fall24_cohort = max(fall24_draw100, fall24_dsgn100)
     print(f"Fall 24 Cohort Size (Historical): {fall24_cohort}")
-    
+
+except FileNotFoundError:
+    print("Error: FOUN_Historical.csv not found")
+    fall24_cohort = 2000 # Fallback
 except Exception as e:
     print(f"Error reading history: {e}")
     fall24_cohort = 2000 # Fallback
@@ -36,11 +42,23 @@ def load_crosswalk():
     try:
         df = pd.read_csv('Data/sequence_crosswalk_template.csv')
         return dict(zip(df['legacy_code'].str.strip(), df['foun_code'].str.strip()))
-    except:
+    except FileNotFoundError:
+        print("Warning: sequence_crosswalk_template.csv not found")
+        return {}
+    except Exception as e:
+        print(f"Warning: Error loading crosswalk: {e}")
         return {}
 
 mapping = load_crosswalk()
-df_spring25 = pd.read_csv('Data/Spring25.csv')
+
+try:
+    df_spring25 = pd.read_csv('Data/Spring25.csv')
+except FileNotFoundError:
+    print("Error: Spring25.csv not found")
+    exit(1)
+except Exception as e:
+    print(f"Error loading Spring25.csv: {e}")
+    exit(1)
 df_spring25.columns = df_spring25.columns.str.lower().str.strip()
 if 'course' in df_spring25.columns:
     df_spring25 = df_spring25.rename(columns={'course': 'course_code'})

@@ -57,23 +57,30 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                     {/* Message text with markdown-like formatting */}
                     <div className="text-sm whitespace-pre-wrap">
                         {message.content.split('\n').map((line, i) => {
-                            // Bold text
-                            const formattedLine = line.replace(
-                                /\*\*(.*?)\*\*/g,
-                                '<strong>$1</strong>'
-                            );
-                            // Bullet points
-                            if (line.startsWith('• ')) {
+                            // Parse bold text markers (**) safely
+                            const parts = line.split(/\*\*(.*?)\*\*/g);
+                            const isBullet = line.trim().startsWith('•');
+
+                            if (isBullet) {
+                                // Render bullet point with bold text support
                                 return (
                                     <div key={i} className="flex gap-2">
                                         <span>•</span>
-                                        <span dangerouslySetInnerHTML={{ __html: formattedLine.slice(2) }} />
+                                        <span>
+                                            {parts.map((part, j) =>
+                                                j % 2 === 1 ? <strong key={j}>{part}</strong> : part
+                                            )}
+                                        </span>
                                     </div>
                                 );
                             }
+
+                            // Regular line with bold text support
                             return (
                                 <span key={i}>
-                                    <span dangerouslySetInnerHTML={{ __html: formattedLine }} />
+                                    {parts.map((part, j) =>
+                                        j % 2 === 1 ? <strong key={j}>{part}</strong> : part
+                                    )}
                                     {i < message.content.split('\n').length - 1 && <br />}
                                 </span>
                             );

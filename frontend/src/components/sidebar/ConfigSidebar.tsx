@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ForecastConfig } from '@/lib/types';
@@ -8,38 +7,60 @@ import { ForecastConfig } from '@/lib/types';
 interface ConfigSidebarProps {
     config: ForecastConfig;
     onConfigChange?: (config: Partial<ForecastConfig>) => void;
+    onToggleCollapse?: () => void;
     isCollapsed?: boolean;
 }
+
+const TERM_OPTIONS = [
+    'Fall 2025', 'Winter 2026', 'Spring 2026', 'Summer 2026',
+    'Fall 2026', 'Winter 2027', 'Spring 2027', 'Summer 2027',
+];
+
+const DEFAULT_CONFIG: ForecastConfig = {
+    capacity: 20,
+    progressionRate: 0.95,
+    bufferPercent: 10,
+    quartersToForecast: 2,
+    term: 'Spring 2026',
+};
 
 export function ConfigSidebar({
     config,
     onConfigChange,
+    onToggleCollapse,
     isCollapsed = false,
 }: ConfigSidebarProps) {
-    const [localConfig, setLocalConfig] = useState(config);
+    const handleReset = () => {
+        onConfigChange?.(DEFAULT_CONFIG);
+    };
 
     if (isCollapsed) {
         return (
             <div className="w-12 border-l border-border bg-muted/20 flex flex-col items-center py-4">
-                <Button variant="ghost" size="icon">
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onToggleCollapse}
+                    aria-label="Expand configuration"
+                >
                     <SettingsIcon className="h-5 w-5" />
                 </Button>
             </div>
         );
     }
 
-    const handleChange = (key: keyof ForecastConfig, value: number | string) => {
-        const newConfig = { ...localConfig, [key]: value };
-        setLocalConfig(newConfig);
-        onConfigChange?.({ [key]: value });
-    };
-
     return (
         <div className="w-72 border-l border-border bg-muted/20 flex flex-col">
             {/* Header */}
             <div className="p-4 flex items-center justify-between">
                 <h3 className="font-semibold">Configuration</h3>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={onToggleCollapse}
+                    aria-label="Collapse configuration"
+                >
                     <ChevronRightIcon className="h-4 w-4" />
                 </Button>
             </div>
@@ -53,7 +74,12 @@ export function ConfigSidebar({
                     <div className="text-sm text-muted-foreground">
                         Internal Data Lake, Banner
                     </div>
-                    <Button variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 h-7 px-2 text-xs"
+                        aria-label="Edit data source"
+                    >
                         <PencilIcon className="h-3 w-3 mr-1" />
                         Edit
                     </Button>
@@ -67,7 +93,12 @@ export function ConfigSidebar({
                             Confidence Level: <span className="text-green-500">95%</span>
                         </div>
                     </div>
-                    <Button variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 h-7 px-2 text-xs"
+                        aria-label="Edit model selection"
+                    >
                         <PencilIcon className="h-3 w-3 mr-1" />
                         Edit
                     </Button>
@@ -75,11 +106,16 @@ export function ConfigSidebar({
 
                 {/* Forecast Horizon */}
                 <ConfigSection title="Forecast Horizon">
-                    <div className="text-sm font-medium">{localConfig.term}</div>
-                    <Button variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs">
-                        <PencilIcon className="h-3 w-3 mr-1" />
-                        Edit
-                    </Button>
+                    <select
+                        value={config.term}
+                        onChange={(e) => onConfigChange?.({ term: e.target.value })}
+                        className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        aria-label="Select forecast term"
+                    >
+                        {TERM_OPTIONS.map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                        ))}
+                    </select>
                 </ConfigSection>
 
                 {/* Parameters */}
@@ -87,18 +123,23 @@ export function ConfigSidebar({
                     <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
                             <span className="text-muted-foreground">Capacity</span>
-                            <span>{localConfig.capacity} students</span>
+                            <span>{config.capacity} students</span>
                         </div>
                         <div className="flex justify-between">
                             <span className="text-muted-foreground">Progression</span>
-                            <span>{(localConfig.progressionRate * 100).toFixed(0)}%</span>
+                            <span>{(config.progressionRate * 100).toFixed(0)}%</span>
                         </div>
                         <div className="flex justify-between">
                             <span className="text-muted-foreground">Buffer</span>
-                            <span>{localConfig.bufferPercent}%</span>
+                            <span>{config.bufferPercent}%</span>
                         </div>
                     </div>
-                    <Button variant="ghost" size="sm" className="mt-2 h-7 px-2 text-xs">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-2 h-7 px-2 text-xs"
+                        aria-label="Edit parameters"
+                    >
                         <PencilIcon className="h-3 w-3 mr-1" />
                         Edit
                     </Button>
@@ -109,7 +150,13 @@ export function ConfigSidebar({
 
             {/* Footer */}
             <div className="p-4">
-                <Button variant="outline" size="sm" className="w-full">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={handleReset}
+                    aria-label="Reset configuration to defaults"
+                >
                     Reset to Defaults
                 </Button>
             </div>

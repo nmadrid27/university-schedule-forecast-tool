@@ -4,14 +4,15 @@ Extracted from app.py for modularity.
 """
 
 from datetime import datetime
+from typing import Union
 
 
-def quarter_to_date(year, quarter):
+def quarter_to_date(year: Union[int, str], quarter: Union[str, int]) -> datetime:
     """
     Convert year and quarter to a datetime for time series modeling.
 
     Args:
-        year: Calendar year (int)
+        year: Calendar year (int or str)
         quarter: Quarter name (e.g., 'Fall', 'Winter', 'Spring', 'Summer') or number (1-4)
 
     Returns:
@@ -25,11 +26,13 @@ def quarter_to_date(year, quarter):
     month = quarter_map.get(q, 1)
     # Winter quarter belongs to the next calendar year conceptually
     if q == 'winter':
-        year = year + 1
-    return datetime(int(year), month, 1)
+        year = int(year) + 1
+    else:
+        year = int(year)
+    return datetime(year, month, 1)
 
 
-def date_to_quarter_label(date):
+def date_to_quarter_label(date: datetime) -> str:
     """
     Convert datetime back to quarter label.
 

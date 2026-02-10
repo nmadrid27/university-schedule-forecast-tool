@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import pandas as pd
 import re
 import os
@@ -201,17 +203,24 @@ def calculate_demand(admissions_df, major_courses, extracted_codes):
     return pd.DataFrame(demand_list).groupby(['Course', 'Location']).agg({'Demand': 'sum'}).reset_index()
 
 def main():
-    if not os.path.exists(ADMISSIONS_FILE): return
+    if not os.path.exists(ADMISSIONS_FILE):
+        print(f"Warning: Admissions file not found: {ADMISSIONS_FILE}")
+        return
+    if not os.path.exists(MASTERLIST_FILE):
+        print(f"Warning: Masterlist file not found: {MASTERLIST_FILE}")
+        return
     reqs, codes = parse_masterlist_requirements(MASTERLIST_FILE)
     print(f"Loaded requirements for {len(reqs)} majors.")
     try:
         adm_df = load_admissions_data(ADMISSIONS_FILE)
-    except: return
-    
+    except Exception as e:
+        print(f"Error loading admissions data: {e}")
+        return
+
     if adm_df.empty: return
-    
+
     result_df = calculate_demand(adm_df, reqs, codes)
-    
+
     if not result_df.empty:
         print("\n--- FOUN COURSE DEMAND FORECAST (WI26) ---")
         print(result_df)

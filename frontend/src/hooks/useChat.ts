@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Message, ForecastResult, ForecastSummary } from '@/lib/types';
+import { Message, ForecastResult, ForecastSummary, ForecastConfig } from '@/lib/types';
 import { api } from '@/lib/api';
 
 // Generate unique ID for messages
@@ -9,7 +9,7 @@ function generateId(): string {
     return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
-export function useChat() {
+export function useChat(config?: ForecastConfig) {
     const [messages, setMessages] = useState<Message[]>([
         {
             id: generateId(),
@@ -39,10 +39,19 @@ export function useChat() {
 
             // Check if this is a forecast command
             if (response.parsedCommand?.intent === 'forecast') {
-                // Run the forecast
+                // Use the term parsed from the message, or fall back to the config term
+                const parsedTerm = response.parsedCommand.parameters.term as string;
+                const forecastTerm = parsedTerm || config?.term || 'Spring 2026';
+
+                // Run the forecast with current config
                 const forecastResponse = await api.runForecast({
-                    term: response.parsedCommand.parameters.term as string || 'Spring 2026',
+                    term: forecastTerm,
                     method: 'sequence',
+                    config: config ? {
+                        capacity: config.capacity,
+                        progressionRate: config.progressionRate,
+                        bufferPercent: config.bufferPercent,
+                    } : undefined,
                 });
 
                 setForecastResults(forecastResponse.results);
@@ -60,7 +69,10 @@ export function useChat() {
                 content: response.message,
                 timestamp: new Date(),
                 metadata: {
-                    parsedCommand: response.parsedCommand,
+                    parsedCommand: {
+                        ...response.parsedCommand,
+                        raw_message: content,
+                    },
                 },
             };
             setMessages((prev) => [...prev, assistantMessage]);
@@ -69,7 +81,7 @@ export function useChat() {
             console.error('API error:', error);
 
             // Mock response for demo purposes when backend isn't running
-            const mockResponse = getMockResponse(content);
+            const mockResponse = getMockResponse(content, config?.term);
 
             const assistantMessage: Message = {
                 id: generateId(),
@@ -87,7 +99,7 @@ export function useChat() {
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [config]);
 
     const clearMessages = useCallback(() => {
         setMessages([
@@ -113,7 +125,7 @@ export function useChat() {
 }
 
 // Mock responses for when backend isn't running
-function getMockResponse(input: string): {
+function getMockResponse(input: string, configTerm?: string): {
     message: string;
     metadata?: Message['metadata'];
     showForecast?: boolean;
@@ -122,13 +134,22 @@ function getMockResponse(input: string): {
 } {
     const lower = input.toLowerCase();
 
-    if (lower.includes('forecast') && (lower.includes('spring') || lower.includes('2026'))) {
+    // Extract term from message or use config term
+    const termMatch = lower.match(/(spring|summer|fall|winter)\s*(\d{4}|\d{2})/);
+    let detectedTerm = configTerm || 'Spring 2026';
+    if (termMatch) {
+        const season = termMatch[1].charAt(0).toUpperCase() + termMatch[1].slice(1);
+        const year = termMatch[2].length === 2 ? '20' + termMatch[2] : termMatch[2];
+        detectedTerm = `${season} ${year}`;
+    }
+
+    if (lower.includes('forecast') || termMatch) {
         return {
-            message: "Here is the forecast for Spring 2026 enrollments based on current models and historical data trends. The projections suggest a moderate growth trajectory, particularly in online programs.",
+            message: `Here is the forecast for ${detectedTerm} enrollments based on current models and historical data trends. The projections suggest a moderate growth trajectory, particularly in online programs.`,
             metadata: {
                 parsedCommand: {
                     intent: 'forecast',
-                    parameters: { term: 'Spring 2026' },
+                    parameters: { term: detectedTerm },
                     confidence: 0.95,
                     raw_message: input,
                 },

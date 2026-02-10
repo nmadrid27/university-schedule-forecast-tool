@@ -3,12 +3,20 @@ Data loading utilities for enrollment forecasting.
 Extracted from app.py for modularity.
 """
 
+import logging
 import pandas as pd
-import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 
 def load_course_mapping():
-    """Load course code mapping from Data/sequence_crosswalk_template.csv."""
+    """
+    Load course code mapping from Data/sequence_crosswalk_template.csv.
+
+    Returns:
+        dict: Mapping from legacy course codes to FOUN course codes.
+              Returns empty dict if file not found or error occurs.
+    """
     try:
         crosswalk_path = "Data/sequence_crosswalk_template.csv"
         df_cross = pd.read_csv(crosswalk_path)
@@ -17,15 +25,22 @@ def load_course_mapping():
         mapping = dict(zip(df_cross['legacy_code'].str.strip(), df_cross['foun_code'].str.strip()))
         return mapping
     except FileNotFoundError:
-        st.warning("Crosswalk file (Data/sequence_crosswalk_template.csv) not found.")
+        logger.warning("Crosswalk file (Data/sequence_crosswalk_template.csv) not found.")
         return {}
     except Exception as e:
-        st.warning(f"Error loading crosswalk: {e}")
+        logger.warning(f"Error loading crosswalk: {e}")
         return {}
 
 
 def load_historical_data():
-    """Load and process historical data from Data/FOUN_Historical.csv."""
+    """
+    Load and process historical data from Data/FOUN_Historical.csv.
+
+    Returns:
+        pd.DataFrame: Processed historical enrollment data with columns:
+            year, quarter, course_code, enrollment, waitlist.
+            Returns empty DataFrame if file not found or error occurs.
+    """
     try:
         hist_path = "Data/FOUN_Historical.csv"
         df_hist = pd.read_csv(hist_path)
@@ -68,10 +83,10 @@ def load_historical_data():
         return df_hist[['year', 'quarter', 'course_code', 'enrollment', 'waitlist']]
 
     except FileNotFoundError:
-        st.warning("Historical data file (Data/FOUN_Historical.csv) not found.")
+        logger.warning("Historical data file (Data/FOUN_Historical.csv) not found.")
         return pd.DataFrame()
     except Exception as e:
-        st.warning(f"Error loading historical data: {e}")
+        logger.warning(f"Error loading historical data: {e}")
         return pd.DataFrame()
 
 

@@ -1,7 +1,8 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { useRef, useEffect, useState } from 'react';
+import * as ScrollAreaPrimitive from '@radix-ui/react-scroll-area';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { Message } from '@/lib/types';
@@ -13,14 +14,22 @@ interface ChatWindowProps {
 }
 
 export function ChatWindow({ messages, isLoading, onSendMessage }: ChatWindowProps) {
-    const scrollRef = useRef<HTMLDivElement>(null);
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
 
     // Auto-scroll to bottom when new messages arrive
     useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        if (viewportRef.current && isAutoScrollEnabled) {
+            viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
         }
-    }, [messages]);
+    }, [messages, isAutoScrollEnabled]);
+
+    // Detect manual scroll to disable auto-scroll
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        const target = e.currentTarget;
+        const isAtBottom = target.scrollHeight - target.scrollTop <= target.clientHeight + 50;
+        setIsAutoScrollEnabled(isAtBottom);
+    };
 
     return (
         <div className="flex flex-col h-full">
@@ -35,8 +44,13 @@ export function ChatWindow({ messages, isLoading, onSendMessage }: ChatWindowPro
             </div>
 
             {/* Messages area */}
-            <ScrollArea className="flex-1 p-4" ref={scrollRef}>
-                <div className="max-w-3xl mx-auto">
+            <ScrollArea className="flex-1">
+                <ScrollAreaPrimitive.Viewport
+                    ref={viewportRef}
+                    onScroll={handleScroll}
+                    className="flex-1 p-4"
+                >
+                    <div className="max-w-3xl mx-auto">
                     {messages.map((message) => (
                         <MessageBubble key={message.id} message={message} />
                     ))}
@@ -57,6 +71,8 @@ export function ChatWindow({ messages, isLoading, onSendMessage }: ChatWindowPro
                         </div>
                     )}
                 </div>
+                </ScrollAreaPrimitive.Viewport>
+                <ScrollBar />
             </ScrollArea>
 
             {/* Input */}

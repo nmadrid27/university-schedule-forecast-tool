@@ -54,7 +54,7 @@ def render_chat_window():
                 time_str = dt.strftime("%I:%M %p")
             else:
                 time_str = ""
-        except:
+        except (ValueError, TypeError):
             time_str = ""
 
         with st.chat_message(role):

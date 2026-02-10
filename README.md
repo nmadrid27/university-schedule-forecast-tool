@@ -4,7 +4,7 @@ Predicts future course enrollment using Prophet + Exponential Smoothing ensemble
 
 ## 🚀 Quick Start
 
-### Option 1: Chat Interface (Recommended for Non-Technical Users)
+### Primary Interface: Modern Next.js Frontend
 
 **One-Click Launch (macOS):**
 ```bash
@@ -13,30 +13,58 @@ Forecast_Tool_Launcher.command
 ```
 
 The launcher will automatically:
-- Check Python installation
-- Create virtual environment
-- Install dependencies
-- Launch the chat interface in your browser
+- Install Node.js dependencies
+- Start the dev server
+- Launch the app in your browser at http://localhost:3000
 
 **Manual Launch:**
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+npm install
 
-# Run the chat interface
-streamlit run app_chat.py
+# Start development server
+npm run dev
 ```
 
-See [QUICKSTART_CHAT.md](QUICKSTART_CHAT.md) for detailed instructions.
+The app will be available at `http://localhost:3000`
 
-### Option 2: Original UI (Classic Interface)
+## 🔧 Troubleshooting
+
+### Turbopack Database Error
+
+If you encounter a "Failed to open database" error when starting the dev server:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Clean the build cache
+cd frontend
+rm -rf .next
 
-# Run the original app
-streamlit run app.py
+# Start with webpack instead of turbopack
+NEXT_PRIVATE_WEBPACK=1 npm run dev
+```
+
+**Root Cause:** Next.js Turbopack's build cache can become corrupted. Clearing the `.next` directory and using webpack resolves the issue.
+
+### Port Already in Use
+
+If port 3000 is already in use:
+
+```bash
+# Find and kill the process
+lsof -ti:3000 | xargs kill -9
+
+# Or use a different port
+PORT=3001 npm run dev
+```
+
+### Node.js Compatibility
+
+- **Minimum:** Node.js 16+
+- **Recommended:** Node.js 18+ (LTS)
+
+Check your version:
+```bash
+node --version
 ```
 
 ## Data Format
@@ -53,12 +81,13 @@ Upload a CSV or Excel file with these columns:
 
 ## ✨ Features
 
-### Chat Interface (New in v2.0)
-- **Natural Language Input**: Ask questions in plain English
-- **Conversational Workflow**: Guided forecasting experience
-- **Context-Aware**: Remembers uploaded data and settings
-- **Smart Suggestions**: Contextual help and command suggestions
-- **One-Click Installation**: No technical setup required
+### Modern Frontend
+- **Intuitive UI**: Clean, responsive design built with React and Tailwind CSS
+- **Real-time Updates**: Instant feedback on parameter changes
+- **Data Upload**: Easy CSV/Excel file import
+- **Results Export**: Download forecasts as CSV
+- **Configuration**: Adjustable forecasting parameters
+- **Professional Design**: Component-based architecture with Radix UI
 
 ### Forecasting Engine
 - **Dual-model forecasting**: Prophet (seasonality/trends) + Exponential Smoothing (short-term patterns)
@@ -67,10 +96,6 @@ Upload a CSV or Excel file with these columns:
 - **Section calculator**: Converts forecasts to section counts with configurable capacity and buffer
 - **Batch processing**: Forecast multiple courses simultaneously
 - **Export**: Download results as CSV
-
-### Both Interfaces Available
-- **Chat UI** (`app_chat.py`): Natural language, beginner-friendly
-- **Classic UI** (`app.py`): Traditional form-based interface
 
 ## Configuration Options
 
@@ -93,19 +118,22 @@ Upload a CSV or Excel file with these columns:
 - Recommended: 4-8 quarters for better accuracy
 - More data improves forecast quality
 
-## 🏗️ Architecture (v2.0)
+## 🏗️ Architecture (v3.0)
 
-### Modular Package Structure
+### Frontend Stack
 
+**Modern React Application** (`frontend/`):
+- **Framework**: Next.js 16.1.6 with React 19
+- **Styling**: Tailwind CSS 4 with Postcss
+- **Components**: Radix UI primitives
+- **Icons**: Lucide React
+- **Dev Server**: http://localhost:3000
+
+### Backend / Python Analysis
+
+Python forecasting engine (used by frontend or CLI):
 ```
 forecast_tool/
-├── chat/              # Natural language processing
-│   ├── command_parser.py    # Parse user intent
-│   ├── conversation.py      # State management
-│   └── responses.py         # Response formatting
-├── ui/                # Streamlit components
-│   ├── chat_window.py       # Chat interface
-│   └── output_window.py     # Results display
 ├── forecasting/       # Prediction models
 │   ├── prophet_forecast.py  # Prophet model
 │   ├── ets_forecast.py      # Exponential Smoothing
@@ -118,53 +146,28 @@ forecast_tool/
     └── settings.py          # Default settings
 ```
 
-### Application Files
+### Key Files
 
-- `app_chat.py` - Chat-based UI (new)
-- `app.py` - Classic form-based UI (original)
-- `Forecast_Tool_Launcher.command` - One-click launcher
-- `forecast_spring26_from_sequence_guides.py` - Production CLI script
+- **`frontend/`** - Next.js React application (PRIMARY UI)
+- **`Forecast_Tool_Launcher.command`** - One-click launcher
+- **`forecast_spring26_from_sequence_guides.py`** - Production CLI script
+- **`deprecated/`** - Archived Streamlit files (legacy)
 
 ## 📚 Documentation
 
-- **[QUICKSTART_CHAT.md](QUICKSTART_CHAT.md)** - Chat interface guide
 - **[AGENTS.md](AGENTS.md)** - Production workflow
 - **[CLAUDE.md](CLAUDE.md)** - Developer documentation
 - **[PRD_Frontend_Interface.md](PRD_Frontend_Interface.md)** - Product requirements
+- **[frontend/README.md](frontend/README.md)** - Frontend development guide
 
-## 🆚 Interface Comparison
+## ⚠️ Deprecated
 
-| Feature | Chat UI | Classic UI |
-|---------|---------|------------|
-| **Launch** | One-click | Manual setup |
-| **Input** | Natural language | Forms/buttons |
-| **Learning Curve** | Minimal | Moderate |
-| **Guidance** | Conversational | Tooltips |
-| **Best For** | Non-technical users | Power users |
+The Streamlit-based interfaces have been deprecated in favor of the modern Next.js frontend:
+- `app_chat.py` - **Deprecated** (moved to `deprecated/`)
+- `app.py` - **Deprecated** (moved to `deprecated/`)
+- Legacy Streamlit files archived in `deprecated/` directory
 
-**Both interfaces use the same forecasting engine and produce identical results.**
-
-## 🤖 Example Chat Interactions
-
-```
-You: Forecast Spring 2026
-Bot: I'll generate a forecast. Please upload your enrollment data first.
-
-You: [uploads CSV]
-Bot: Successfully loaded enrollment_data.csv!
-     - 150 enrollment records
-     - 12 unique courses
-
-You: Forecast all courses for Spring 2026
-Bot: Forecast complete for 12 courses in Spring 2026.
-     Results are displayed on the right.
-
-You: Set capacity to 25 students
-Bot: Setting section capacity to 25 students.
-
-You: Download the results
-Bot: You can download the forecast results using the CSV button.
-```
+**Why?** The Next.js frontend provides better UX, performance, and maintainability.
 
 ## 🔧 Advanced Usage
 

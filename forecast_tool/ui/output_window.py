@@ -3,6 +3,7 @@ Output window component for the Streamlit UI.
 Right panel: forecast results, visualizations, and file upload with shadcn styling.
 """
 
+import logging
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -15,6 +16,8 @@ from forecast_tool.forecasting.ets_forecast import forecast_ets
 from forecast_tool.forecasting.ensemble import calculate_sections, ensemble_forecast
 from forecast_tool.config.settings import *
 from forecast_tool.ui.components import card, badge, button, alert
+
+logger = logging.getLogger(__name__)
 
 
 def render_output_window():
@@ -100,8 +103,8 @@ def process_uploaded_data(uploaded_files, include_history):
             try:
                 df_uploaded[['quarter', 'year']] = df_uploaded['term'].str.split(' ', expand=True)
                 df_uploaded['year'] = df_uploaded['year'].astype(int)
-            except Exception:
-                pass
+            except (ValueError, AttributeError, KeyError) as e:
+                logger.warning(f"Could not parse term column: {e}")
 
         # Rename columns
         df_uploaded = df_uploaded.rename(columns={'course': 'course_code'})

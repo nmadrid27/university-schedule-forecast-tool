@@ -121,6 +121,16 @@ class ApiClient {
         });
     }
 
+    // Get available terms
+    async getTerms() {
+        return this.request<{
+            available_terms: Array<{ termCode: string; label: string }>;
+            forecastable_terms: Array<{ termCode: string; label: string }>;
+        }>('/api/terms', {
+            method: 'GET',
+        });
+    }
+
     // Health check
     async healthCheck() {
         return this.request<{ status: string }>('/api/health', {

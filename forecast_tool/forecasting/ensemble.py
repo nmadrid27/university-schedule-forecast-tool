@@ -3,10 +3,11 @@ Ensemble forecasting methods and section calculations.
 Extracted from app.py for modularity.
 """
 
+from typing import Union
 import numpy as np
 
 
-def calculate_sections(enrollment, capacity, buffer_pct):
+def calculate_sections(enrollment: Union[int, float], capacity: int, buffer_pct: float) -> int:
     """
     Calculate sections needed with buffer.
 
@@ -16,13 +17,18 @@ def calculate_sections(enrollment, capacity, buffer_pct):
         buffer_pct: Capacity buffer percentage (0-100)
 
     Returns:
-        Number of sections needed (integer)
+        Number of sections needed (integer). Returns 0 for invalid inputs.
     """
+    if capacity <= 0 or enrollment < 0:
+        return 0
     effective_capacity = capacity * (1 - buffer_pct / 100)
+    if effective_capacity <= 0:
+        return 0
     return int(np.ceil(enrollment / effective_capacity))
 
 
-def ensemble_forecast(prophet_pred, ets_pred, weight_prophet=0.6):
+def ensemble_forecast(prophet_pred: Union[int, float], ets_pred: Union[int, float],
+                      weight_prophet: float = 0.6) -> float:
     """
     Combine Prophet and ETS forecasts using weighted ensemble.
 
