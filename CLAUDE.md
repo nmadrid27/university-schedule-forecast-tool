@@ -16,8 +16,14 @@ SCAD FOUN Enrollment Forecasting Tool — forecasts foundation course section ne
 # One-time setup (installs Homebrew, Python, Node, venv, npm deps)
 ./install.command
 
-# Start both backend + frontend, opens browser
+# Start both backend + frontend, opens browser (auto-checks for updates)
 ./Forecast_Tool_Launcher.command
+
+# Start without auto-update check
+./Forecast_Tool_Launcher.command --no-update
+
+# Pull latest code + update dependencies
+./update.command
 
 # Stop both servers
 ./stop.command
@@ -155,8 +161,10 @@ All in `Data/` directory:
 | Script | Purpose |
 |--------|---------|
 | `install.command` | One-time setup: Homebrew, Python 3.11+, Node 18+, `.venv`, `npm install` |
-| `Forecast_Tool_Launcher.command` | Starts backend (port 8000) + frontend (port 3000), health checks, opens browser, cleanup on exit |
+| `Forecast_Tool_Launcher.command` | Starts backend (port 8000) + frontend (port 3000), auto-update check, health checks, opens browser, cleanup on exit. Pass `--no-update` to skip update check. |
+| `update.command` | Pulls latest code from GitHub, updates Python and Node dependencies. Safe to run anytime. |
 | `stop.command` | Kills processes on ports 3000 and 8000 |
+| `SCAD Forecast Tool.app` | Minimal macOS app bundle — runs the launcher. Drag to Dock for one-click access. |
 
 ## Documentation
 

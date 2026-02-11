@@ -1,0 +1,19 @@
+#!/bin/bash
+#
+# SCAD Forecast Tool — App Bundle Launcher
+# This script is the executable inside the .app bundle.
+# It locates and runs the main launcher script from the repo.
+#
+
+# The .app lives inside the repo root, so navigate up from Contents/MacOS/
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_DIR="$(cd "$APP_DIR/.." && pwd)"
+LAUNCHER="$REPO_DIR/Forecast_Tool_Launcher.command"
+
+if [ ! -f "$LAUNCHER" ]; then
+    osascript -e 'display dialog "Cannot find Forecast_Tool_Launcher.command.\n\nMake sure the SCAD Forecast Tool.app is inside the forecast-tool folder." buttons {"OK"} default button 1 with icon stop'
+    exit 1
+fi
+
+# Open a Terminal window running the launcher so the user can see logs
+open -a Terminal "$LAUNCHER"

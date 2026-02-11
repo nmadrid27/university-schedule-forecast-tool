@@ -104,6 +104,32 @@ Click the **Download** button in the results panel to save a CSV file of the cur
 
 ---
 
+## Updating the Tool
+
+When a new version of the tool is released, you can update with one double-click:
+
+1. Open the `forecast-tool` folder
+2. Double-click **`update.command`**
+3. Wait for "Update Complete!" to appear
+4. Click **OK** on the dialog
+
+The updater pulls the latest code from GitHub and reinstalls any changed dependencies. It's safe to run anytime — it won't break a working installation.
+
+> **Note:** The launcher also checks for updates automatically on startup. If you're online, it will pull new changes before starting the servers. To skip this, pass `--no-update` when running from the command line.
+
+> **Tip:** If you don't have a `.git` folder (e.g., you received a plain ZIP), the updater will skip the code update step. Ask Nathan for a git-enabled copy to enable automatic updates.
+
+### Dock Access (Optional)
+
+For one-click access from your Dock:
+1. Find **`SCAD Forecast Tool.app`** in the `forecast-tool` folder
+2. Drag it to your Dock
+3. Click it anytime to launch the tool (opens the same Terminal-based launcher)
+
+> **Important:** Keep the `.app` inside the `forecast-tool` folder — it needs the other files to work.
+
+---
+
 ## Updating Data for New Terms
 
 When a new term starts and you have updated enrollment data:
@@ -163,7 +189,9 @@ forecast-tool/
 |
 |-- install.command              <-- Run once to set up
 |-- Forecast_Tool_Launcher.command  <-- Run to start the tool
+|-- update.command               <-- Run to pull latest updates
 |-- stop.command                 <-- Run to stop the tool
+|-- SCAD Forecast Tool.app       <-- Drag to Dock for quick access
 |
 |-- Data/                        <-- Your enrollment data goes here
 |   |-- Master Schedule of Classes.csv
@@ -233,7 +261,7 @@ forecast-tool/
 A: The tool is designed for macOS. The `.command` launcher scripts are macOS-specific. The underlying code (Python + Node.js) works on Windows, but you'd need to start the servers manually from the command line.
 
 **Q: Do I need an internet connection?**
-A: Only for the first-time setup (to download dependencies). After that, the tool runs entirely offline on your computer.
+A: Only for the first-time setup (to download dependencies) and to receive updates. The forecasting itself runs entirely offline on your computer. If you're offline when launching, the auto-update check is skipped automatically.
 
 **Q: How accurate are the forecasts?**
 A: The sequence-based method is highly accurate for terms with good sequencing data because it directly traces enrolled students to their next courses. Ratio-based forecasts (used for Summer) are rougher estimates based on historical patterns.

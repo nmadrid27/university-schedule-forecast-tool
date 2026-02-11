@@ -11,6 +11,14 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 API_DIR="$SCRIPT_DIR/api"
 BACKEND_PID=""
 FRONTEND_PID=""
+SKIP_UPDATE=0
+
+# ---------- Parse arguments ----------
+for arg in "$@"; do
+    case "$arg" in
+        --no-update) SKIP_UPDATE=1 ;;
+    esac
+done
 
 # ---------- Cleanup on exit ----------
 cleanup() {
@@ -35,6 +43,38 @@ echo "=========================================="
 echo "  SCAD Forecast Tool"
 echo "=========================================="
 echo ""
+
+# ---------- Auto-update check ----------
+if [ "$SKIP_UPDATE" -eq 0 ] && [ -d "$SCRIPT_DIR/.git" ]; then
+    echo "Checking for updates..."
+    cd "$SCRIPT_DIR"
+    # Quick connectivity check (5-second timeout)
+    if git fetch origin --quiet 2>/dev/null; then
+        LOCAL=$(git rev-parse HEAD 2>/dev/null)
+        REMOTE=$(git rev-parse origin/master 2>/dev/null)
+        if [ "$LOCAL" != "$REMOTE" ] && [ -n "$REMOTE" ]; then
+            echo "Update available! Pulling latest changes..."
+            git pull origin master --quiet 2>/dev/null
+            if [ $? -eq 0 ]; then
+                echo "Installing updated dependencies..."
+                source "$VENV_DIR/bin/activate"
+                pip install -r "$SCRIPT_DIR/requirements.txt" --quiet 2>/dev/null
+                deactivate
+                cd "$FRONTEND_DIR"
+                npm install --silent 2>/dev/null
+                cd "$SCRIPT_DIR"
+                echo "Update applied."
+            else
+                echo "Update failed — continuing with current version."
+            fi
+        else
+            echo "Already up to date."
+        fi
+    else
+        echo "Offline — skipping update check."
+    fi
+    echo ""
+fi
 
 # ---------- Preflight checks ----------
 if [ ! -d "$VENV_DIR" ] || [ ! -f "$VENV_DIR/bin/activate" ]; then
