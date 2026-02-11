@@ -5,12 +5,16 @@ Exposes existing Python forecasting logic to the Next.js frontend.
 
 import json
 import re
+import sys
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+# Ensure forecast_tool package is importable from the api/ directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from forecaster import (
     run_sequence_forecast,
@@ -503,6 +507,263 @@ async def list_data_files():
         return {"files": files}
     except OSError:
         raise HTTPException(status_code=500, detail="Failed to read data directory")
+
+
+# ============== Ensemble & Diagnostics Routes ==============
+
+class EnsembleRequest(BaseModel):
+    course: Optional[str] = None
+    campus: Optional[str] = None
+    periods: int = 1
+    optimize_weights: bool = False
+    config: Optional[Dict[str, Any]] = None
+
+
+class EnsembleResult(BaseModel):
+    course: str
+    campus: str
+    projectedSeats: float
+    sections: int
+    method: str
+    weights: Optional[Dict[str, float]] = None
+    cvMape: Optional[float] = None
+
+
+class EnsembleResponse(BaseModel):
+    results: List[EnsembleResult]
+    summary: Dict[str, Any]
+
+
+class DiagnosticsResponse(BaseModel):
+    results: Dict[str, Any]
+    summary: Dict[str, Any]
+
+
+@app.post("/api/forecast/ensemble", response_model=EnsembleResponse)
+def run_ensemble_forecast(request: EnsembleRequest):
+    """Run Prophet+ETS+ARIMA ensemble forecast on historical enrollment data."""
+    import os
+    import warnings
+    import numpy as np
+    import pandas as pd
+    from forecast_tool.data.loaders import load_historical_data
+    from forecast_tool.data.transformers import quarter_to_date
+    from forecast_tool.forecasting.prophet_forecast import forecast_prophet
+    from forecast_tool.forecasting.ets_forecast import forecast_ets
+    from forecast_tool.forecasting.arima_forecast import forecast_arima
+    from forecast_tool.forecasting.ensemble import (
+        ensemble_forecast_weighted,
+        optimize_ensemble_weights,
+        DEFAULT_WEIGHTS,
+    )
+
+    try:
+        disk_cfg = _read_disk_config()
+        req_cfg = request.config or {}
+        capacity = int(req_cfg.get("capacity", disk_cfg.get("capacity", 20)))
+        buffer_percent = float(req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0)))
+
+        # forecast_tool loaders use relative paths from project root
+        prev_cwd = os.getcwd()
+        os.chdir(PROJECT_ROOT)
+        try:
+            df_hist = load_historical_data()
+        finally:
+            os.chdir(prev_cwd)
+        if df_hist.empty:
+            raise HTTPException(status_code=404, detail="Historical data not found or empty")
+
+        # Filter to FOUN courses
+        foun_mask = df_hist["course_code"].str.startswith("FOUN ")
+        df_foun = df_hist[foun_mask].copy()
+        if df_foun.empty:
+            raise HTTPException(status_code=404, detail="No FOUN courses in historical data")
+
+        # Optionally filter by course/campus
+        if request.course:
+            df_foun = df_foun[df_foun["course_code"] == request.course]
+        if request.campus:
+            # Historical data doesn't have campus breakdown at this level;
+            # results will be aggregated across campuses
+            pass
+
+        # Group by course and build time series
+        courses = df_foun["course_code"].unique()
+        periods = request.periods
+
+        forecast_fns = {
+            "prophet": forecast_prophet,
+            "ets": forecast_ets,
+            "arima": forecast_arima,
+        }
+
+        results = []
+        weights_used = dict(DEFAULT_WEIGHTS)
+        cv_mape = None
+
+        for course in sorted(courses):
+            course_df = df_foun[df_foun["course_code"] == course]
+            agg = (
+                course_df.groupby(["year", "quarter"])["enrollment"]
+                .sum()
+                .reset_index()
+            )
+            agg["ds"] = agg.apply(
+                lambda row: quarter_to_date(row["year"], row["quarter"]), axis=1
+            )
+            agg = agg.rename(columns={"enrollment": "y"}).sort_values("ds").reset_index(drop=True)
+            df_ts = agg[["ds", "y"]]
+
+            if len(df_ts) < 4:
+                continue
+
+            # Optimize weights if requested and enough data
+            if request.optimize_weights and len(df_ts) >= 10:
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        weights_used, best_error = optimize_ensemble_weights(
+                            df_ts, forecast_fns, min_train_size=6, horizon=1, step=1
+                        )
+                    cv_mape = best_error if best_error != float("inf") else None
+                except (ValueError, Exception):
+                    weights_used = dict(DEFAULT_WEIGHTS)
+
+            # Run each model
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                preds = {}
+                for name, fn in forecast_fns.items():
+                    try:
+                        raw = fn(df_ts, periods)
+                        if isinstance(raw, pd.DataFrame):
+                            if not raw.empty and "yhat" in raw.columns:
+                                preds[name] = float(raw["yhat"].values[-1])
+                            else:
+                                preds[name] = float("nan")
+                        else:
+                            arr = np.asarray(raw).flatten()
+                            preds[name] = float(arr[-1]) if len(arr) > 0 else float("nan")
+                    except Exception:
+                        preds[name] = float("nan")
+
+            projected = ensemble_forecast_weighted(preds, weights_used)
+            if np.isnan(projected) or projected <= 0:
+                continue
+
+            # Apply buffer
+            buffer_mult = 1.0 + (buffer_percent / 100.0)
+            projected *= buffer_mult
+            sections = int(np.ceil(projected / capacity)) if capacity > 0 else 0
+
+            results.append(EnsembleResult(
+                course=course,
+                campus="All",
+                projectedSeats=round(projected, 2),
+                sections=sections,
+                method="Ensemble (Prophet+ETS+ARIMA)",
+                weights={k: round(v, 3) for k, v in weights_used.items()},
+                cvMape=round(cv_mape, 2) if cv_mape is not None else None,
+            ))
+
+        total_students = sum(r.projectedSeats for r in results)
+        total_sections = sum(r.sections for r in results)
+
+        return EnsembleResponse(
+            results=results,
+            summary={
+                "totalStudents": round(total_students, 1),
+                "totalSections": total_sections,
+                "coursesForecasted": len(results),
+                "method": "Ensemble (Prophet+ETS+ARIMA)",
+                "weights": {k: round(v, 3) for k, v in weights_used.items()},
+                "cvMape": round(cv_mape, 2) if cv_mape is not None else None,
+            },
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Ensemble forecast failed")
+
+
+@app.get("/api/diagnostics", response_model=DiagnosticsResponse)
+def run_diagnostics():
+    """Run stationarity and seasonality diagnostics on all FOUN courses."""
+    import os
+    import numpy as np
+    import pandas as pd
+    from forecast_tool.data.loaders import load_historical_data
+    from forecast_tool.data.transformers import quarter_to_date
+    from forecast_tool.diagnostics.stationarity_test import analyze_all_courses
+
+    try:
+        prev_cwd = os.getcwd()
+        os.chdir(PROJECT_ROOT)
+        try:
+            df_hist = load_historical_data()
+        finally:
+            os.chdir(prev_cwd)
+        if df_hist.empty:
+            raise HTTPException(status_code=404, detail="Historical data not found or empty")
+
+        foun_mask = df_hist["course_code"].str.startswith("FOUN ") | df_hist["course_code"].str.startswith("DRAW ")
+        df_foun = df_hist[foun_mask].copy()
+
+        # Build per-course enrollment series (aggregated by quarter, ordered chronologically)
+        course_dict = {}
+        for course in df_foun["course_code"].unique():
+            course_df = df_foun[df_foun["course_code"] == course]
+            agg = (
+                course_df.groupby(["year", "quarter"])["enrollment"]
+                .sum()
+                .reset_index()
+            )
+            agg["ds"] = agg.apply(
+                lambda row: quarter_to_date(row["year"], row["quarter"]), axis=1
+            )
+            agg = agg.sort_values("ds").reset_index(drop=True)
+            if len(agg) >= 4:
+                course_dict[course] = agg["enrollment"]
+
+        if not course_dict:
+            raise HTTPException(status_code=404, detail="Insufficient historical data for diagnostics")
+
+        analysis = analyze_all_courses(course_dict)
+
+        # Sanitize for JSON serialization: convert numpy types, strip arrays
+        def sanitize(obj):
+            if isinstance(obj, dict):
+                return {k: sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [sanitize(v) for v in obj]
+            if isinstance(obj, (np.bool_,)):
+                return bool(obj)
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            return obj
+
+        clean_results = sanitize(analysis["results"])
+        clean_summary = sanitize(analysis["summary"])
+
+        # Remove large arrays from API response
+        for course_data in clean_results.values():
+            seasonality = course_data.get("seasonality", {})
+            for key in ["seasonal_component", "trend_component", "residual_component"]:
+                if key in seasonality:
+                    seasonality[key] = None
+
+        return DiagnosticsResponse(
+            results=clean_results,
+            summary=clean_summary,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Diagnostics analysis failed")
 
 
 if __name__ == "__main__":
