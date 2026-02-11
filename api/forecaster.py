@@ -13,7 +13,6 @@ import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple, DefaultDict
-from collections import defaultdict
 
 FOUN_CODE_RE = re.compile(r"\bFOUN\s*(\d{3})\b", re.IGNORECASE)
 
@@ -521,14 +520,13 @@ def run_ratio_forecast(
             if col == "projected_seats" or col.endswith("_projected_seats"):
                 seats_col = col
                 break
-        if seats_col is None and "sections" in fieldnames:
-            # Fall back: no projected_seats column found
+        if seats_col is None:
             return []
 
         for row in reader:
             course = (row.get("course") or "").strip()
             campus = (row.get("campus") or "").strip()
-            seats = parse_number(row.get(seats_col)) if seats_col else 0.0
+            seats = parse_number(row.get(seats_col))
             if course and campus and seats > 0:
                 feeder_data.append((course, campus, seats))
 

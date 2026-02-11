@@ -274,8 +274,9 @@ def run_forecast(request: ForecastRequest):
         if not rows:
             info = resolve_term_info(target_term)
             feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
-            feeder_parts = target_term.strip().split()
-            feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else "2026"
+            feeder_tc = info["closer_feeder"]["term_code"]
+            feeder_label = term_code_to_label(feeder_tc)
+            feeder_year = feeder_label.split()[1] if " " in feeder_label else feeder_tc[:4]
             # Look for the feeder quarter's forecast CSV
             feeder_pattern = f"{feeder_quarter}_{feeder_year}_FOUN_Forecast*.csv"
             feeder_csvs = sorted(DATA_DIR.glob(feeder_pattern))
