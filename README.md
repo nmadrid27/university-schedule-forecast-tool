@@ -1,71 +1,46 @@
 # SCAD FOUN Enrollment Forecasting Tool
 
-Predicts future course enrollment using Prophet + Exponential Smoothing ensemble modeling, then calculates required section counts.
+Predicts Foundation course enrollment and calculates section needs for upcoming terms using sequence-based forecasting, with a 3-model time-series ensemble (Prophet + ETS + ARIMA) as an alternative method.
 
-## 🚀 Quick Start
+## Quick Start (macOS)
 
-### Primary Interface: Modern Next.js Frontend
+### First time? Run the installer:
 
-**One-Click Launch (macOS):**
-```bash
-# Simply double-click:
-Forecast_Tool_Launcher.command
-```
+1. Double-click **`install.command`**
+2. Wait for "Installation Complete!" (5-10 minutes on first run)
 
-The launcher will automatically:
-- Install Node.js dependencies
-- Start the dev server
-- Launch the app in your browser at http://localhost:3000
+This installs Homebrew, Python, Node.js, and all dependencies. Safe to run again if needed.
 
-**Manual Launch:**
-```bash
-# Install dependencies
-npm install
+### Launch the tool:
 
-# Start development server
-npm run dev
-```
+1. Double-click **`Forecast_Tool_Launcher.command`**
+2. Wait for "Forecast Tool is running!" — your browser opens automatically
+3. Type a forecast request in the chat, e.g. "Forecast Spring 2026"
 
-The app will be available at `http://localhost:3000`
+### Stop the tool:
 
-## 🔧 Troubleshooting
+Double-click **`stop.command`**, or close the Terminal window.
+
+### Full user guide:
+
+See **[docs/HANDOFF_GUIDE.md](docs/HANDOFF_GUIDE.md)** for detailed instructions, troubleshooting, and FAQ.
+
+## Troubleshooting
 
 ### Turbopack Database Error
 
-If you encounter a "Failed to open database" error when starting the dev server:
-
-```bash
-# Clean the build cache
-cd frontend
-rm -rf .next
-
-# Start with webpack instead of turbopack
-NEXT_PRIVATE_WEBPACK=1 npm run dev
-```
-
-**Root Cause:** Next.js Turbopack's build cache can become corrupted. Clearing the `.next` directory and using webpack resolves the issue.
+If you encounter a "Failed to open database" error:
+1. Double-click `stop.command` to stop everything
+2. Delete the folder `frontend/.next`
+3. Double-click `Forecast_Tool_Launcher.command` to restart
 
 ### Port Already in Use
 
-If port 3000 is already in use:
+Double-click `stop.command` to kill any leftover processes, then relaunch.
 
-```bash
-# Find and kill the process
-lsof -ti:3000 | xargs kill -9
+### Something Else?
 
-# Or use a different port
-PORT=3001 npm run dev
-```
-
-### Node.js Compatibility
-
-- **Minimum:** Node.js 16+
-- **Recommended:** Node.js 18+ (LTS)
-
-Check your version:
-```bash
-node --version
-```
+See the full troubleshooting section in [docs/HANDOFF_GUIDE.md](docs/HANDOFF_GUIDE.md#troubleshooting).
 
 ## Data Format
 
