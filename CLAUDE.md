@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**UPDATE RULE**: Always update this file and `MEMORY.md` at the end of every interaction to reflect any changes made to the project (new files, modified architecture, resolved issues, new decisions, etc.). Keep both in sync with reality.
+
 ## Overview
 
 SCAD FOUN Enrollment Forecasting Tool — forecasts foundation course section needs at Savannah College of Art and Design. Three-tier architecture: Next.js React frontend, FastAPI backend, and Python forecasting engine. Packaged for delivery to non-technical macOS users with double-clickable launcher scripts.
