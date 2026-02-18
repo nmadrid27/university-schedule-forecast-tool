@@ -6,54 +6,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-SCAD FOUN Enrollment Forecasting Tool — forecasts foundation course section needs at Savannah College of Art and Design. Three-tier architecture: Next.js React frontend, FastAPI backend, and Python forecasting engine. Packaged for delivery to non-technical macOS users with double-clickable launcher scripts.
+SCAD FOUN Enrollment Forecasting Tool — forecasts foundation course section needs at Savannah College of Art and Design. Three-tier architecture: Next.js frontend, FastAPI backend, and Python forecasting engine. Packaged for non-technical macOS users with double-clickable launcher scripts.
 
 ## Commands
 
-### Full-Stack Launch (recommended)
+### Full-Stack (recommended)
 
 ```bash
-# One-time setup (installs Homebrew, Python, Node, venv, npm deps)
-./install.command
-
-# Start both backend + frontend, opens browser (auto-checks for updates)
-./Forecast_Tool_Launcher.command
-
-# Start without auto-update check
-./Forecast_Tool_Launcher.command --no-update
-
-# Pull latest code + update dependencies
-./update.command
-
-# Stop both servers
-./stop.command
+./install.command                           # one-time setup (Homebrew, Python, Node, venv, npm)
+./Forecast_Tool_Launcher.command            # start backend + frontend, auto-update, open browser
+./Forecast_Tool_Launcher.command --no-update  # skip auto-update check
+./update.command                            # pull latest code + update deps
+./stop.command                              # kill servers on ports 3000/8000
 ```
 
-### Frontend (Next.js)
+### Frontend Only
 
 ```bash
-cd frontend
-npm install          # install dependencies
-npm run dev          # dev server at http://localhost:3000
-npm run build        # production build
-npm run lint         # ESLint
+cd frontend && npm install && npm run dev   # dev server at localhost:3000
+npm run build                               # production build
+npm run lint                                # ESLint
 ```
 
-If Turbopack corrupts the build cache ("Failed to open database"):
-```bash
-rm -rf frontend/.next
-npm run dev
-```
+Turbopack cache corruption ("Failed to open database"): `rm -rf frontend/.next` then restart.
 
-### FastAPI Backend
+### Backend Only
 
 ```bash
-source .venv/bin/activate
-cd api
-python3 main.py       # starts at http://localhost:8000
+source .venv/bin/activate && python3 api/main.py   # starts at localhost:8000
 ```
 
-### Python CLI Forecasting
+### CLI Forecasting
 
 ```bash
 source .venv/bin/activate
@@ -62,137 +45,146 @@ python3 forecast_spring26_from_sequence_guides.py --config forecast_config.json
 
 ## Architecture
 
-The system has three layers that can operate independently:
+Three independent layers — each can run standalone:
 
-### 1. Next.js Frontend (`frontend/`)
+### Data Flow: Frontend → Backend → Forecaster
 
-Single-page app with a 3-panel layout defined in `frontend/src/app/page.tsx`:
+1. User types a message in the chat UI (`frontend/src/components/chat/ChatWindow.tsx`)
+2. `hooks/useChat.ts` sends it via `lib/api.ts` to `POST /api/chat`
+3. `api/main.py` runs `SimpleCommandParser` (regex-based intent classification) — extracts intent, term, course, campus
+4. If intent is `forecast`, the frontend then calls `POST /api/forecast`
+5. `api/main.py` delegates to `api/forecaster.py` which runs sequence-based or ratio-based forecast
+6. Results flow back through the API as JSON → `useChat` stores them → `ResultsPanel` renders table + metrics
+
+When the backend is unavailable, `useChat.ts` falls back to **mock responses** (hardcoded data).
+
+### Frontend (`frontend/`)
+
+Single-page app: 3-panel layout in `frontend/src/app/page.tsx`:
 - Left: `HistorySidebar` — conversation history
-- Center (40%): `ChatWindow` — chat-based interaction with the forecasting engine
-- Right (60%): `ResultsPanel` — forecast tables, metrics cards, charts
-- Right overlay: `ConfigSidebar` — capacity, buffer, progression rate controls
+- Center (40%): `ChatWindow` — chat interface
+- Right (60%): `ResultsPanel` — forecast tables, metrics cards
+- Right overlay: `ConfigSidebar` — capacity, buffer, progression rate
 
-Component domains: `components/chat/`, `components/results/`, `components/sidebar/`, `components/ui/` (Shadcn/ui primitives).
+Component barrel exports: `components/chat/index.ts`, `components/results/index.ts`, `components/sidebar/index.ts`. UI primitives in `components/ui/` (Shadcn/ui + Radix).
 
-State management is in `hooks/useChat.ts` — returns **mock responses** when the backend is unavailable. The API client (`lib/api.ts`) targets `http://localhost:8000` (configurable via `NEXT_PUBLIC_API_URL`).
+State: `hooks/useChat.ts` (messages, loading, forecast results). API client: `lib/api.ts` (targets `NEXT_PUBLIC_API_URL` or `localhost:8000`). Types: `lib/types.ts`.
 
-Stack: Next.js 16.1.6, React 19, Tailwind CSS 4, Radix UI, TypeScript 5.
+Stack: Next.js 16.1.6, React 19, Tailwind CSS 4, Radix UI, TypeScript 5. Path alias: `@/*` → `frontend/src/*`.
 
-### 2. FastAPI Backend (`api/main.py`)
+### Backend (`api/main.py`)
 
-Bridges the frontend to Python forecasting logic. Single-file API (770+ lines) with real forecasting wired in via `api/forecaster.py`:
+Single-file FastAPI server (~770 lines). CORS configured for `localhost:3000`.
 
-- `GET /api/health` — health check
-- `POST /api/chat` — parses user messages via `SimpleCommandParser` (regex-based intent classification)
-- `POST /api/forecast` — runs real sequence-based forecast with ratio-based fallback for terms without sequencing data (e.g., Summer)
-- `GET /api/terms` — lists available + forecastable terms from Master Schedule
-- `GET/PUT /api/config` — reads/writes `forecast_config.json`
-- `GET /api/data/files` — lists CSV/XLSX files in `Data/`
-- `POST /api/forecast/ensemble` — runs 3-model ensemble (Prophet+ETS+ARIMA) on historical data with optional weight optimization
-- `GET /api/diagnostics` — ADF stationarity tests + seasonal strength diagnostics
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/health` | Health check |
+| `POST /api/chat` | Parse user message → intent + parameters |
+| `POST /api/forecast` | Run sequence-based forecast (ratio fallback) |
+| `GET /api/terms` | Available + forecastable terms from Master Schedule |
+| `GET/PUT /api/config` | Read/write `forecast_config.json` |
+| `GET /api/data/files` | List CSVs in `Data/` |
+| `POST /api/forecast/ensemble` | 3-model ensemble on historical data |
+| `GET /api/diagnostics` | ADF stationarity + seasonal strength |
 
-CORS configured for localhost:3000.
+### Forecasting Engine (`api/forecaster.py`)
 
-### 3. Python Forecasting Engine
-
-**`api/forecaster.py`** — Pure functions for any-term forecasting (generalized from CLI scripts):
-- `run_sequence_forecast()` — primary method using sequencing guides
-- `run_ratio_forecast()` — fallback using historical enrollment ratios
-- `resolve_term_info()` — parses term strings, resolves feeder term codes
+Pure functions — no argparse, no sys.exit. Entry points:
+- `run_sequence_forecast()` — primary method
+- `run_ratio_forecast()` — fallback for terms without sequencing data (e.g., Summer)
+- `resolve_term_info()` — parses "Spring 2026" into term codes + feeder terms
 - `load_previous_forecast()` — reads existing CSVs for change delta comparison
 
-**Production CLI scripts** (standalone, argparse-based):
-- `forecast_spring26_from_sequence_guides.py` — PRIMARY production script
-- `forecast_fall26_from_sequence_guides.py` — Fall term variant
-- `forecast_spring26_from_seat_projection.py` — alternate methodology
-- `calculate_foun_demand.py` — FOUN demand calculator
-- `forecast_summer26_foun.py` — Summer term forecaster
+The `forecast_tool/` package contains reusable time-series models (Prophet, ETS, ARIMA), data loaders, and diagnostics. Streamlit-era `chat/` and `ui/` subpackages have been archived to `deprecated/`.
 
-**Reusable package** (`forecast_tool/`):
-- `forecasting/prophet_forecast.py` — Facebook Prophet time series model
-- `forecasting/ets_forecast.py` — Exponential Smoothing (statsmodels)
-- `forecasting/arima_forecast.py` — ARIMA with cascading fallbacks: (1,1,1) → (1,1,0) → (0,1,1) → naive mean
-- `forecasting/ensemble.py` — 3-model weighted ensemble (40/35/25 default), `optimize_ensemble_weights()` via grid search + temporal CV, `calculate_sections()`
-- `validation/temporal_cv.py` — expanding-window temporal cross-validation (MAPE, RMSE, MAE)
-- `diagnostics/stationarity_test.py` — ADF stationarity test + seasonal strength measurement
-- `data/loaders.py` — CSV/Excel loading, course mapping, term code parsing
-- `data/transformers.py` — quarter/date conversions
-- `config/settings.py` — default configuration values
-- `chat/` and `ui/` — Streamlit-era modules (legacy)
+## Domain Logic (SCAD-Specific)
 
-## Forecasting Logic
+### SCAD Term Codes
 
-### Primary: Sequence-Based
+Format: `YYYYQQ` where QQ is `10`=Fall, `20`=Winter, `30`=Spring, `40`=Summer.
 
-1. **Sequencing guide** (`Data/FOUN_sequencing_map_by_major.csv`) maps prerequisite courses → target FOUN courses, organized by major and campus
-2. **"CHOICE" entries** split demand evenly across listed course options (`1/N` weighting)
-3. **Campus detection**: SCADnow = room `OLNOW` or section starts with `N`; Master Schedule uses `CAMPUS` column (`SAV`/`NOW`)
-4. **Progression rate** applied per term gap: e.g., Fall→Spring = 0.95² (2 transitions), Winter→Spring = 0.95¹
-5. **Section calculation**: `ceil(projected_seats / capacity)`, default capacity = 20
+**Critical**: Fall uses `calendar_year + 1` for the academic year. Fall 2025 → term code `202610`. All other quarters: academic year = calendar year.
 
-### Fallback: Ratio-Based
+### Sequence-Based Forecasting (Primary)
 
-When the sequencing map has no data for a target quarter (e.g., Summer):
+1. `FOUN_sequencing_map_by_major.csv` maps prerequisite courses → target FOUN courses by major and campus
+2. "CHOICE" entries split demand evenly (`1/N` weighting) across listed course options
+3. Concurrent courses (co-requisites) use anchor selection to avoid double-counting
+4. Progression rate `0.95` applied per term gap: Fall→Spring = `0.95²`, Winter→Spring = `0.95¹`
+5. Section calculation: `ceil(projected_seats / capacity)`, default capacity = 20
+
+### Legacy Code Crosswalk
+
+Historical data uses old course codes (DRAW, DSGN) that map to current FOUN codes. The crosswalk CSV (`Data/sequence_crosswalk_template.csv`) handles `DSGN 100 → FOUN 110`, `DRAW 200 → FOUN 230`, etc. Applied in both sequence and ratio forecasting via `load_crosswalk()`.
+
+### Ratio-Based Forecasting (Fallback)
+
+Used when sequencing map has no data for a target quarter (Summer):
 - Computes historical `target_enrollment / feeder_enrollment` ratios per course
-- Applies ratios to the closest feeder quarter's existing forecast CSV
-- Default ratio: 0.12 when insufficient historical data
+- Applies ratios to closest feeder quarter's forecast CSV
+- Default ratio: `0.12` when insufficient data
 
-### Alternative: 3-Model Ensemble
+### Campus Detection
 
-For time-series-based forecasting on historical data:
-- Prophet (40%), ETS (35%), ARIMA (25%) default weights
-- NaN-safe weight redistribution when a model fails
-- Optional weight optimization via grid search (5% increments) over temporal CV
-- Requires 4+ quarters of historical data per course
+- **Sequencing map**: `campus` column; `"GENERAL"` applies to all campuses
+- **Enrollment data**: SCADnow = room `OLNOW` or section starts with `N`; Master Schedule uses `CAMPUS` column (`SAV`/`NOW`)
 
-Configuration lives in `forecast_config.json`. SCAD term codes use `YYYYQQ` format: `202610`=Fall 2025, `202620`=Winter 2026, `202630`=Spring 2026, `202640`=Summer 2026.
+### 3-Model Ensemble (Alternative)
+
+Prophet (40%), ETS (35%), ARIMA (25%) with NaN-safe weight redistribution. Optional weight optimization via grid search (5% increments) over temporal CV. Requires 4+ quarters of history. ARIMA fallback chain: `(1,1,1)` → `(1,1,0)` → `(0,1,1)` → naive mean.
 
 ## Key Data Files
 
-All in `Data/` directory:
-- `FOUN_sequencing_map_by_major.csv` — **CRITICAL**: drives the primary forecasting methodology
-- `Master Schedule of Classes.csv` (9.2MB) — complete term schedule with enrollment actuals
-- `FAll25.csv`, `Winter26.csv` — current term enrollment snapshots
-- `FOUN_Historical.csv` — multi-year historical data for time series models
-- Output forecasts: `Spring_2026_FOUN_Forecast_*.csv`, `Summer_2026_FOUN_Forecast.csv`, `Fall_2026_FOUN_Forecast_*.csv`
+All in `Data/`:
+- `FOUN_sequencing_map_by_major.csv` — **drives primary forecasting**
+- `Master Schedule of Classes.csv` (9.2MB) — all terms, enrollment actuals
+- `FAll25.csv`, `Winter26.csv` — current term snapshots
+- `FOUN_Historical.csv` — multi-year data for ensemble models
+- `sequence_crosswalk_template.csv` — legacy→FOUN code mapping
+- Output forecasts: `*_FOUN_Forecast_*.csv`
 
-## Launcher Scripts
+## Launcher & Distribution
 
 | Script | Purpose |
 |--------|---------|
-| `install.command` | One-time setup: Homebrew, Python 3.11+, Node 18+, `.venv`, `npm install` |
-| `Forecast_Tool_Launcher.command` | Starts backend (port 8000) + frontend (port 3000), auto-update check, health checks, opens browser, cleanup on exit. Pass `--no-update` to skip update check. |
-| `update.command` | Pulls latest code from GitHub, updates Python and Node dependencies. Safe to run anytime. |
-| `stop.command` | Kills processes on ports 3000 and 8000 |
-| `SCAD Forecast Tool.app` | Minimal macOS app bundle — runs the launcher. Drag to Dock for one-click access. |
+| `install.command` | One-time: Homebrew, Python 3.11+, Node 18+, `.venv`, `npm install` |
+| `Forecast_Tool_Launcher.command` | Full-stack launch with auto-update, health checks, browser open, cleanup trap. `--no-update` flag available. |
+| `update.command` | `git pull` + `pip install` + `npm install`, osascript dialog on completion |
+| `stop.command` | Kills ports 3000/8000 |
+| `SCAD Forecast Tool.app` | macOS app bundle (thin shell wrapper) — must stay inside repo folder |
 
-## Documentation
-
-| File | Audience |
-|------|----------|
-| `README.md` | Quick start + feature overview |
-| `docs/HANDOFF_GUIDE.md` | Non-technical user guide (setup, usage, troubleshooting, FAQ) |
-| `docs/DEVELOPMENT_HISTORY.md` | Technical build chronicle (4 phases) |
+Distribution: Git repo with `.git/` for updates, or plain ZIP (update features degrade gracefully). Recipient: unzip → `install.command` → launch.
 
 ## Python Environment
 
 - Python 3.14.2 via Homebrew (Apple Silicon)
 - Virtual env: `.venv/` at project root
-- All deps in unified `requirements.txt` (fastapi, uvicorn, pydantic, prophet, statsmodels, pandas, numpy, openpyxl, plotly)
-- `api/requirements.txt` references root via `-r ../requirements.txt`
-- Streamlit removed; deprecated interfaces archived in `deprecated/`
+- Unified `requirements.txt` at root; `api/requirements.txt` → `-r ../requirements.txt`
+- Deprecated Streamlit interfaces archived in `deprecated/`
 
 ## Current State & Known Gaps
 
-- `/api/forecast` is wired to real forecasting logic (sequence-based + ratio fallback)
-- `hooks/useChat.ts` has mock responses as fallback when backend is unavailable
-- No test suites (no test framework configured)
+- No test suites or test framework
 - No CI/CD pipeline
-- Streamlit interfaces archived in `deprecated/`
+- `hooks/useChat.ts` mock responses active when backend unavailable
+- `README.md` has stale defaults (capacity 25, Prophet weight 0.6) — actual config uses capacity 20, progression_rate 0.95
+- `.venv/` has broken symlinks (Python 3.13 was upgraded to 3.14); recreate with `python3 -m venv .venv`
+- CLI scripts (`forecast_*_from_sequence_guides.py`) lack the anchor-course dedup that `api/forecaster.py` has — can produce slightly inflated results
+- `forecast_fall26_foun.py` has a term code pairing bug (pairs Spring N with Fall N-1 instead of Fall N due to SCAD academic year convention)
+- `os.chdir()` in ensemble/diagnostics endpoints is not thread-safe under concurrent requests
 
 ## Code Standards
 
 - **Python**: PEP 8, 4-space indentation
-- **TypeScript/JS**: ESLint (Next.js core-web-vitals + TypeScript rules), 2-space indentation
+- **TypeScript/JS**: ESLint (Next.js core-web-vitals + TypeScript), 2-space indentation
 - **Commits**: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`)
-- **Path alias**: `@/*` maps to `frontend/src/*` in TypeScript
+
+## Documentation
+
+| File | Audience |
+|------|----------|
+| `README.md` | Quick start + features |
+| `docs/HANDOFF_GUIDE.md` | Non-technical user guide |
+| `docs/DEVELOPMENT_HISTORY.md` | Technical build chronicle |
+| `docs/PRD.md` | Product requirements (local only, not in git) |
+| `AGENTS.md` | CLI production runbook |

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -190,10 +190,10 @@ class TermsResponse(BaseModel):
     forecastable_terms: List[TermOption]
 
 class ConfigModel(BaseModel):
-    capacity: int = 20
-    progressionRate: float = 0.95
-    bufferPercent: float = 0.0
-    quartersToForecast: int = 2
+    capacity: int = Field(default=20, ge=1, le=100)
+    progressionRate: float = Field(default=0.95, ge=0.0, le=1.0)
+    bufferPercent: float = Field(default=10.0, ge=0.0, le=100.0)
+    quartersToForecast: int = Field(default=2, ge=1, le=8)
     defaultTerm: str = "Spring 2026"
 
 def _read_disk_config() -> dict:
@@ -246,8 +246,8 @@ def run_forecast(request: ForecastRequest):
         req_cfg = request.config or {}
 
         capacity = int(req_cfg.get("capacity", disk_cfg.get("capacity", 20)))
-        progression_rate = float(req_cfg.get("progression_rate", disk_cfg.get("progression_rate", 0.95)))
-        buffer_percent = float(req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0)))
+        progression_rate = float(req_cfg.get("progressionRate", req_cfg.get("progression_rate", disk_cfg.get("progression_rate", 0.95))))
+        buffer_percent = float(req_cfg.get("bufferPercent", req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0))))
 
         # Resolve data file paths (relative paths are relative to PROJECT_ROOT)
         def resolve(key: str, default: str) -> Path:
@@ -492,14 +492,14 @@ async def list_data_files():
             for f in data_dir.glob("*.csv"):
                 files.append({
                     "name": f.name,
-                    "path": str(f),
+                    "path": f.name,
                     "size": f.stat().st_size,
                     "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat()
                 })
             for f in data_dir.glob("*.xlsx"):
                 files.append({
                     "name": f.name,
-                    "path": str(f),
+                    "path": f.name,
                     "size": f.stat().st_size,
                     "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat()
                 })
@@ -768,4 +768,4 @@ def run_diagnostics():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

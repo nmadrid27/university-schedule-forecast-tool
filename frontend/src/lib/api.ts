@@ -70,6 +70,7 @@ class ApiClient {
                 projectedSeats: number;
                 sections: number;
                 change?: number;
+                changePercent?: number;
             }>;
             summary: {
                 totalStudents: number;
@@ -88,9 +89,9 @@ class ApiClient {
         return this.request<{
             files: Array<{
                 name: string;
-                term: string;
-                records: number;
-                uploadedAt: string;
+                path: string;
+                size: number;
+                modified: string;
             }>;
         }>('/api/data/files', {
             method: 'GET',

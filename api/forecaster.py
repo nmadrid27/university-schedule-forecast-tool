@@ -166,6 +166,25 @@ def parse_quarter_courses(cell_value: str) -> List[Tuple[str, float]]:
     return [(course, weight) for course in courses]
 
 
+def _select_anchor_courses(
+    courses: List[Tuple[str, float]],
+    freq: Dict[str, int],
+) -> List[Tuple[str, float]]:
+    """Pick one representative from concurrent courses to avoid double-counting.
+
+    Concurrent courses (weight >= 1.0) are co-requisites taken by the same
+    cohort. Picking only the most-frequent one prevents counting that cohort
+    multiple times. CHOICE courses (weight < 1.0) are alternatives — kept as-is.
+    """
+    if not courses:
+        return courses
+    concurrent = [(c, w) for c, w in courses if w >= 1.0]
+    if len(concurrent) <= 1:
+        return courses
+    best = max(concurrent, key=lambda cw: freq.get(cw[0], 0))
+    return [best]
+
+
 def load_sequence_mappings(
     path: Path,
     target_quarter: str,
@@ -179,6 +198,8 @@ def load_sequence_mappings(
         farther_source_totals – total program weight per farther source across ALL rows
                                 (used to normalize farther-feeder proportions correctly)
         closer_to_target      – source→target weights from rows with a closer course
+        closer_source_totals  – total program weight per closer source, computed from
+                                UNFILTERED data so co-occurring courses get diluted
         target_counts
     """
     mappings = {
@@ -186,16 +207,34 @@ def load_sequence_mappings(
             "farther_to_target": defaultdict(float),
             "farther_source_totals": defaultdict(float),
             "closer_to_target": defaultdict(float),
+            "closer_source_totals": defaultdict(float),
             "target_counts": defaultdict(float),
         },
         "SCADNOW": {
             "farther_to_target": defaultdict(float),
             "farther_source_totals": defaultdict(float),
             "closer_to_target": defaultdict(float),
+            "closer_source_totals": defaultdict(float),
             "target_counts": defaultdict(float),
         },
     }
 
+    # --- Pass 1: Count how often each course appears as a concurrent source ---
+    # This determines which course is the best anchor per quarter.
+    closer_freq: Dict[str, int] = defaultdict(int)
+    farther_freq: Dict[str, int] = defaultdict(int)
+
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            for c, w in parse_quarter_courses(row.get(closer_quarter)):
+                if w >= 1.0:
+                    closer_freq[c] += 1
+            for c, w in parse_quarter_courses(row.get(farther_quarter)):
+                if w >= 1.0:
+                    farther_freq[c] += 1
+
+    # --- Pass 2: Build mappings using anchor-filtered source courses ---
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -203,11 +242,14 @@ def load_sequence_mappings(
             if not campuses:
                 continue
 
-            farther_courses = parse_quarter_courses(row.get(farther_quarter))
-            closer_courses = parse_quarter_courses(row.get(closer_quarter))
+            farther_raw = parse_quarter_courses(row.get(farther_quarter))
+            closer_raw = parse_quarter_courses(row.get(closer_quarter))
             target_courses = parse_quarter_courses(row.get(target_quarter))
             if not target_courses:
                 continue
+
+            farther_courses = _select_anchor_courses(farther_raw, farther_freq)
+            closer_courses = _select_anchor_courses(closer_raw, closer_freq)
 
             for campus in ("SAVANNAH", "SCADNOW"):
                 if not campus_matches(campuses, campus):
@@ -216,10 +258,15 @@ def load_sequence_mappings(
                 for target_course, target_weight in target_courses:
                     mappings[campus]["target_counts"][target_course] += target_weight
 
-                # Track total program weight per farther source across ALL rows.
-                # This is the correct denominator for normalizing farther-feeder proportions:
-                # it represents the fraction of all farther-quarter students in programs
-                # that skip the closer quarter and go directly to the target quarter.
+                # Source totals use UNFILTERED courses so the normalization
+                # denominator reflects the true program weight.  Courses that
+                # mostly co-occur with the anchor will have a large total but
+                # few entries in the filtered mapping, yielding a small proportion.
+                # Independent feeders keep proportions close to self-normalizing.
+                for closer_course, closer_weight in closer_raw:
+                    for target_course, target_weight in target_courses:
+                        mappings[campus]["closer_source_totals"][closer_course] += closer_weight * target_weight
+
                 for farther_course, farther_weight in farther_courses:
                     for target_course, target_weight in target_courses:
                         mappings[campus]["farther_source_totals"][farther_course] += farther_weight * target_weight
@@ -445,7 +492,10 @@ def run_sequence_forecast(
             source_totals=mappings[campus]["farther_source_totals"],
         )
         from_closer = distribute_enrollments(
-            closer_by_course, mappings[campus]["closer_to_target"], closer_multiplier
+            closer_by_course,
+            mappings[campus]["closer_to_target"],
+            closer_multiplier,
+            source_totals=mappings[campus]["closer_source_totals"],
         )
 
         combined = defaultdict(float)

@@ -58,7 +58,6 @@ export function useChat(config?: ForecastConfig) {
                 setForecastSummary({
                     ...forecastResponse.summary,
                     lastUpdated: new Date(),
-                    accuracy: 94,
                 });
             }
 
