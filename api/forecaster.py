@@ -175,16 +175,22 @@ def load_sequence_mappings(
     """Load the sequencing map CSV and build mappings for the given quarters.
 
     Returns per-campus dicts with keys:
-        farther_to_target, closer_to_target, target_counts
+        farther_to_target     – source→target weights, only from rows with no closer course
+        farther_source_totals – total program weight per farther source across ALL rows
+                                (used to normalize farther-feeder proportions correctly)
+        closer_to_target      – source→target weights from rows with a closer course
+        target_counts
     """
     mappings = {
         "SAVANNAH": {
             "farther_to_target": defaultdict(float),
+            "farther_source_totals": defaultdict(float),
             "closer_to_target": defaultdict(float),
             "target_counts": defaultdict(float),
         },
         "SCADNOW": {
             "farther_to_target": defaultdict(float),
+            "farther_source_totals": defaultdict(float),
             "closer_to_target": defaultdict(float),
             "target_counts": defaultdict(float),
         },
@@ -210,10 +216,23 @@ def load_sequence_mappings(
                 for target_course, target_weight in target_courses:
                     mappings[campus]["target_counts"][target_course] += target_weight
 
+                # Track total program weight per farther source across ALL rows.
+                # This is the correct denominator for normalizing farther-feeder proportions:
+                # it represents the fraction of all farther-quarter students in programs
+                # that skip the closer quarter and go directly to the target quarter.
                 for farther_course, farther_weight in farther_courses:
                     for target_course, target_weight in target_courses:
-                        key = (farther_course, target_course)
-                        mappings[campus]["farther_to_target"][key] += farther_weight * target_weight
+                        mappings[campus]["farther_source_totals"][farther_course] += farther_weight * target_weight
+
+                # Only populate farther_to_target for rows that have no closer-quarter course.
+                # When a row has both a closer course and a farther course leading to the
+                # same target, those students will be captured via the closer feeder path.
+                # Adding the farther feeder as well would double-count the same cohort.
+                if not closer_courses:
+                    for farther_course, farther_weight in farther_courses:
+                        for target_course, target_weight in target_courses:
+                            key = (farther_course, target_course)
+                            mappings[campus]["farther_to_target"][key] += farther_weight * target_weight
 
                 for closer_course, closer_weight in closer_courses:
                     for target_course, target_weight in target_courses:
@@ -233,6 +252,25 @@ def parse_number(value: str) -> float:
         return float(text)
     except ValueError:
         return 0.0
+
+
+def load_crosswalk(crosswalk_path: Path) -> Dict[str, str]:
+    """Load legacy→FOUN course code mappings from the crosswalk CSV.
+
+    Returns a dict like {"DSGN 100": "FOUN 110", "DRAW 200": "FOUN 230", ...}.
+    Returns an empty dict if the file doesn't exist.
+    """
+    if not crosswalk_path.is_file():
+        return {}
+    mapping: Dict[str, str] = {}
+    with crosswalk_path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            legacy = (row.get("legacy_code") or "").strip()
+            foun = (row.get("foun_code") or "").strip()
+            if legacy and foun:
+                mapping[legacy] = foun
+    return mapping
 
 
 def load_term_enrollments(path: Path, term_code: Optional[str] = None) -> Dict[Tuple[str, str], float]:
@@ -267,12 +305,13 @@ def load_term_enrollments(path: Path, term_code: Optional[str] = None) -> Dict[T
                 course = f"{subj} {crs}"
                 enrollment = parse_number(row.get("ACT ENR"))
                 campus_code = (row.get("CAMPUS") or "").strip().upper()
+                # Only model Savannah (SAV) and SCADnow (NOW); skip Atlanta (ATL) and other campuses.
                 if campus_code == "NOW":
                     campus = "SCADNOW"
                 elif campus_code == "SAV":
                     campus = "SAVANNAH"
                 else:
-                    continue
+                    continue  # ATL and any other campus codes are intentionally excluded
                 totals[(campus, course)] += enrollment
     return totals
 
@@ -287,6 +326,7 @@ def distribute_enrollments(
     enrollments: Dict[str, float],
     mapping: Dict[Tuple[str, str], float],
     multiplier: float,
+    source_totals: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
     demand: Dict[str, float] = defaultdict(float)
     by_source: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -299,7 +339,14 @@ def distribute_enrollments(
         targets = by_source.get(source_course)
         if not targets:
             continue
-        total_weight = sum(targets.values())
+        # If a source_totals normalizer is provided, use it so that the proportion
+        # reflects the share of programs routing through this source, not just
+        # the subset captured by this mapping.
+        total_weight = (
+            source_totals.get(source_course, 0.0)
+            if source_totals is not None
+            else sum(targets.values())
+        )
         if total_weight <= 0:
             continue
         for target_course, weight in targets.items():
@@ -392,7 +439,10 @@ def run_sequence_forecast(
         }
 
         from_farther = distribute_enrollments(
-            farther_by_course, mappings[campus]["farther_to_target"], farther_multiplier
+            farther_by_course,
+            mappings[campus]["farther_to_target"],
+            farther_multiplier,
+            source_totals=mappings[campus]["farther_source_totals"],
         )
         from_closer = distribute_enrollments(
             closer_by_course, mappings[campus]["closer_to_target"], closer_multiplier
@@ -429,12 +479,16 @@ def _compute_historical_ratios(
     historical_path: Path,
     target_quarter_code: str,
     feeder_quarter_code: str,
+    crosswalk_path: Optional[Path] = None,
 ) -> Dict[str, float]:
     """Compute average target/feeder enrollment ratios per course from historical data.
 
     Quarter codes: "10"=Fall, "20"=Winter, "30"=Spring, "40"=Summer.
     Returns {course: ratio}.
     """
+    # Load legacy→FOUN crosswalk so DRAW/DSGN rows map to FOUN codes
+    crosswalk = load_crosswalk(crosswalk_path) if crosswalk_path else {}
+
     # Collect per-course, per-academic-year enrollment totals for each quarter
     # Structure: {course: {acad_year: {quarter_code: total_enrollment}}}
     data: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
@@ -447,9 +501,13 @@ def _compute_historical_ratios(
         for row in reader:
             subj = (row.get("SUBJ") or "").strip().upper()
             crs = (row.get("CRS NUMBER") or "").strip()
-            if not subj.startswith("FOUN") or not crs:
+            if not crs:
                 continue
-            course = f"{subj} {crs}"
+            raw_course = f"{subj} {crs}"
+            # Map legacy codes to FOUN codes; keep FOUN codes as-is
+            course = crosswalk.get(raw_course, raw_course)
+            if not course.startswith("FOUN "):
+                continue
             term_str = str(row.get("TERM") or "").strip()
             if len(term_str) != 6:
                 continue
@@ -501,9 +559,10 @@ def run_ratio_forecast(
     target_qq = str(QUARTER_CODES[info["target_quarter"]])
     feeder_qq = str(QUARTER_CODES[info["closer_feeder"]["quarter"]])
 
-    # Compute per-course historical ratios
+    # Compute per-course historical ratios (with legacy code crosswalk)
+    crosswalk_path = historical_data_path.parent / "sequence_crosswalk_template.csv"
     historical_ratios = _compute_historical_ratios(
-        historical_data_path, target_qq, feeder_qq
+        historical_data_path, target_qq, feeder_qq, crosswalk_path=crosswalk_path
     )
 
     # Load the feeder forecast CSV
