@@ -6,16 +6,29 @@ import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MetricsCards } from './MetricsCards';
 import { DataTable } from './DataTable';
+import { AdjustmentBadges } from './AdjustmentBadges';
 import { ForecastResult, ForecastSummary } from '@/lib/types';
+import { Adjustment } from '@/lib/adjustments';
 
 interface ResultsPanelProps {
     results: ForecastResult[] | null;
     summary: ForecastSummary | null;
     onDownload?: () => void;
     onCompare?: () => void;
+    adjustments?: Adjustment[];
+    onToggleAdjustment?: (id: string) => void;
+    onRemoveAdjustment?: (id: string) => void;
 }
 
-export function ResultsPanel({ results, summary, onDownload, onCompare }: ResultsPanelProps) {
+export function ResultsPanel({
+    results,
+    summary,
+    onDownload,
+    onCompare,
+    adjustments = [],
+    onToggleAdjustment,
+    onRemoveAdjustment,
+}: ResultsPanelProps) {
     // Empty state
     if (!results || !summary) {
         return (
@@ -57,6 +70,7 @@ export function ResultsPanel({ results, summary, onDownload, onCompare }: Result
                         <h2 className="text-lg font-semibold">Forecast Results</h2>
                         <p className="text-sm text-muted-foreground">
                             {summary.method} • Updated {lastUpdated}
+                            {summary.adjustmentsApplied ? ` • ${summary.adjustmentsApplied} adjustment${summary.adjustmentsApplied > 1 ? 's' : ''} applied` : ''}
                         </p>
                     </div>
                     <div className="flex gap-2">
@@ -73,6 +87,15 @@ export function ResultsPanel({ results, summary, onDownload, onCompare }: Result
 
             {/* Content */}
             <ScrollArea className="flex-1 p-4">
+                {/* Adjustment Badges */}
+                {adjustments.length > 0 && onToggleAdjustment && onRemoveAdjustment && (
+                    <AdjustmentBadges
+                        adjustments={adjustments}
+                        onToggle={onToggleAdjustment}
+                        onRemove={onRemoveAdjustment}
+                    />
+                )}
+
                 {/* Metrics */}
                 <MetricsCards summary={summary} />
 

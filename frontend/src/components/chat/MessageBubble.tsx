@@ -3,6 +3,8 @@
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { Message } from '@/lib/types';
+import { AdjustmentCard } from './AdjustmentCard';
+import { Adjustment } from '@/lib/adjustments';
 
 interface MessageBubbleProps {
     message: Message;
@@ -17,6 +19,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         minute: '2-digit',
         hour12: true,
     });
+
+    const adjustments = (message.metadata?.adjustments || []) as Adjustment[];
 
     return (
         <div
@@ -86,20 +90,35 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                             );
                         })}
                     </div>
+
+                    {/* Adjustment card inline */}
+                    {adjustments.length > 0 && (
+                        <AdjustmentCard adjustments={adjustments} />
+                    )}
                 </div>
 
-                {/* Timestamp */}
-                <span className="text-xs text-muted-foreground mt-1 px-1">
-                    {timeString}
-                </span>
+                {/* Badges row */}
+                <div className="flex items-center gap-2 mt-1 px-1">
+                    {/* Timestamp */}
+                    <span className="text-xs text-muted-foreground">
+                        {timeString}
+                    </span>
 
-                {/* Intent badge for parsed commands */}
-                {message.metadata?.parsedCommand?.intent &&
-                    message.metadata.parsedCommand.intent !== 'unknown' && (
-                        <span className="mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                            {message.metadata.parsedCommand.intent}
+                    {/* LLM badge */}
+                    {message.metadata?.llm_used && (
+                        <span className="inline-flex items-center rounded-full bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:text-purple-300">
+                            AI
                         </span>
                     )}
+
+                    {/* Intent badge for parsed commands */}
+                    {message.metadata?.parsedCommand?.intent &&
+                        message.metadata.parsedCommand.intent !== 'unknown' && (
+                            <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                                {message.metadata.parsedCommand.intent}
+                            </span>
+                        )}
+                </div>
             </div>
         </div>
     );

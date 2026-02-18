@@ -50,13 +50,15 @@ Three independent layers — each can run standalone:
 ### Data Flow: Frontend → Backend → Forecaster
 
 1. User types a message in the chat UI (`frontend/src/components/chat/ChatWindow.tsx`)
-2. `hooks/useChat.ts` sends it via `lib/api.ts` to `POST /api/chat`
-3. `api/main.py` runs `SimpleCommandParser` (regex-based intent classification) — extracts intent, term, course, campus
-4. If intent is `forecast`, the frontend then calls `POST /api/forecast`
-5. `api/main.py` delegates to `api/forecaster.py` which runs sequence-based or ratio-based forecast
-6. Results flow back through the API as JSON → `useChat` stores them → `ResultsPanel` renders table + metrics
+2. `hooks/useChat.ts` sends it via `lib/api.ts` to `POST /api/chat` (with last 20 messages as history + current term)
+3. `api/main.py`: if LLM configured → `llm_service.parse_message()` extracts intent + adjustments; else → `SimpleCommandParser` (regex fallback)
+4. If LLM extracts adjustments → persisted to `Data/adjustments/{term}.json`
+5. If intent is `forecast` or `adjust`, the frontend calls `POST /api/forecast`
+6. `api/main.py` loads term adjustments → applies config-level before forecast → delegates to `api/forecaster.py` → applies output-level adjustments after
+7. Results flow back with `adjusted` flags → `ResultsPanel` renders table + metrics + `AdjustmentBadges`
 
 When the backend is unavailable, `useChat.ts` falls back to **mock responses** (hardcoded data).
+When no LLM is configured, the regex `SimpleCommandParser` handles intent parsing (existing behavior preserved).
 
 ### Frontend (`frontend/`)
 
@@ -68,24 +70,34 @@ Single-page app: 3-panel layout in `frontend/src/app/page.tsx`:
 
 Component barrel exports: `components/chat/index.ts`, `components/results/index.ts`, `components/sidebar/index.ts`. UI primitives in `components/ui/` (Shadcn/ui + Radix).
 
-State: `hooks/useChat.ts` (messages, loading, forecast results). API client: `lib/api.ts` (targets `NEXT_PUBLIC_API_URL` or `localhost:8000`). Types: `lib/types.ts`.
+State: `hooks/useChat.ts` (messages, loading, forecast results), `hooks/useAdjustments.ts` (per-term adjustment CRUD). API client: `lib/api.ts` (targets `NEXT_PUBLIC_API_URL` or `localhost:8000`). Types: `lib/types.ts`, `lib/adjustments.ts`.
 
 Stack: Next.js 16.1.6, React 19, Tailwind CSS 4, Radix UI, TypeScript 5. Path alias: `@/*` → `frontend/src/*`.
 
 ### Backend (`api/main.py`)
 
-Single-file FastAPI server (~770 lines). CORS configured for `localhost:3000`.
+Multi-file FastAPI backend. Main server in `api/main.py` (~900 lines). CORS configured for `localhost:3000`.
 
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /api/health` | Health check |
-| `POST /api/chat` | Parse user message → intent + parameters |
-| `POST /api/forecast` | Run sequence-based forecast (ratio fallback) |
+| `POST /api/chat` | LLM-powered parse (with regex fallback) — accepts `{message, history[], term}` |
+| `POST /api/forecast` | Run sequence-based forecast (ratio fallback) with auto-applied adjustments |
 | `GET /api/terms` | Available + forecastable terms from Master Schedule |
 | `GET/PUT /api/config` | Read/write `forecast_config.json` |
 | `GET /api/data/files` | List CSVs in `Data/` |
+| `GET /api/adjustments/{term}` | List adjustments for a term |
+| `POST /api/adjustments/{term}` | Add adjustment |
+| `PUT /api/adjustments/{term}/{id}/toggle` | Toggle adjustment on/off |
+| `DELETE /api/adjustments/{term}/{id}` | Remove adjustment |
+| `GET /api/llm/status` | Check LLM configuration (never exposes API key) |
+| `PUT /api/llm/config` | Update LLM provider/model/key |
 | `POST /api/forecast/ensemble` | 3-model ensemble on historical data |
 | `GET /api/diagnostics` | ADF stationarity + seasonal strength |
+
+Supporting modules:
+- `api/adjustments.py` — Pydantic adjustment models, JSON persistence (`Data/adjustments/`), config-level and output-level application
+- `api/llm_service.py` — Provider-agnostic LLM client (OpenAI, Anthropic, Ollama, custom), system prompt builder, structured output parsing
 
 ### Forecasting Engine (`api/forecaster.py`)
 
@@ -159,7 +171,7 @@ Distribution: Git repo with `.git/` for updates, or plain ZIP (update features d
 
 - Python 3.14.2 via Homebrew (Apple Silicon)
 - Virtual env: `.venv/` at project root
-- Unified `requirements.txt` at root; `api/requirements.txt` → `-r ../requirements.txt`
+- Unified `requirements.txt` at root (includes `openai`, `anthropic` for LLM support); `api/requirements.txt` → `-r ../requirements.txt`
 - Deprecated Streamlit interfaces archived in `deprecated/`
 
 ## Current State & Known Gaps

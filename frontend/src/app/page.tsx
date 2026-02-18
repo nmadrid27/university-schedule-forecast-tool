@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ChatWindow } from '@/components/chat';
 import { ResultsPanel } from '@/components/results';
 import { HistorySidebar, ConfigSidebar } from '@/components/sidebar';
 import { useChat } from '@/hooks/useChat';
+import { useAdjustments } from '@/hooks/useAdjustments';
 import { ForecastConfig } from '@/lib/types';
 
 export default function Home() {
@@ -16,9 +17,17 @@ export default function Home() {
     term: 'Spring 2026',
   });
 
-  const { messages, isLoading, sendMessage, clearMessages, forecastResults, forecastSummary } = useChat(config);
+  const { messages, isLoading, sendMessage, clearMessages, forecastResults, forecastSummary, lastAdjustmentChange } = useChat(config);
+  const { adjustments, toggleAdjustment, removeAdjustment, loadAdjustments } = useAdjustments(config.term);
 
   const [showConfig] = useState(true);
+
+  // Reload adjustments when LLM extracts new ones via chat
+  useEffect(() => {
+    if (lastAdjustmentChange > 0) {
+      loadAdjustments();
+    }
+  }, [lastAdjustmentChange, loadAdjustments]);
 
   const handleConfigChange = useCallback((partial: Partial<ForecastConfig>) => {
     setConfig((prev) => ({ ...prev, ...partial }));
@@ -81,6 +90,9 @@ export default function Home() {
             summary={forecastSummary}
             onDownload={handleDownload}
             onCompare={handleCompare}
+            adjustments={adjustments}
+            onToggleAdjustment={toggleAdjustment}
+            onRemoveAdjustment={removeAdjustment}
           />
         </div>
       </div>

@@ -25,6 +25,23 @@ from forecaster import (
     resolve_term_info,
     QUARTER_CYCLE,
 )
+from adjustments import (
+    Adjustment,
+    AdjustmentScope,
+    load_adjustments,
+    save_adjustments,
+    add_adjustment,
+    toggle_adjustment,
+    remove_adjustment,
+    apply_config_adjustments,
+    apply_output_adjustments,
+)
+from llm_service import (
+    LLMService,
+    create_llm_service,
+    load_api_key,
+    save_api_key,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "forecast_config.json"
@@ -153,10 +170,14 @@ parser = SimpleCommandParser()
 class ChatRequest(BaseModel):
     message: str
     context: Optional[Dict[str, Any]] = None
+    history: Optional[List[Dict[str, str]]] = None
+    term: Optional[str] = None
 
 class ChatResponse(BaseModel):
     message: str
     parsedCommand: Dict[str, Any]
+    adjustments: Optional[List[Dict[str, Any]]] = None
+    llm_used: bool = False
 
 class ForecastRequest(BaseModel):
     term: str
@@ -170,12 +191,14 @@ class ForecastResult(BaseModel):
     sections: int
     change: Optional[float] = None
     changePercent: Optional[float] = None
+    adjusted: Optional[bool] = None
 
 class ForecastSummary(BaseModel):
     totalStudents: float
     totalSections: int
     coursesForecasted: int
     method: str
+    adjustmentsApplied: Optional[int] = None
 
 class ForecastResponse(BaseModel):
     results: List[ForecastResult]
@@ -195,6 +218,20 @@ class ConfigModel(BaseModel):
     bufferPercent: float = Field(default=10.0, ge=0.0, le=100.0)
     quartersToForecast: int = Field(default=2, ge=1, le=8)
     defaultTerm: str = "Spring 2026"
+
+class AdjustmentRequest(BaseModel):
+    type: str  # "config" or "output"
+    parameter: Optional[str] = None
+    operation: Optional[str] = None
+    value: float
+    scope: Optional[Dict[str, Optional[str]]] = None
+    reason: str = ""
+
+class LLMConfigRequest(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
 
 def _read_disk_config() -> dict:
     """Read forecast_config.json from disk."""
@@ -220,8 +257,67 @@ async def health_check():
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Parse user message and return structured response."""
+    """Parse user message and return structured response.
+
+    If an LLM is configured, uses it for intent parsing and adjustment extraction.
+    Falls back to SimpleCommandParser if no LLM or on LLM failure.
+    """
     try:
+        disk_cfg = _read_disk_config()
+        llm = create_llm_service(disk_cfg)
+
+        # Try LLM first if configured
+        if llm and llm.is_configured():
+            # Build active adjustments context
+            term = request.term or disk_cfg.get("default_term", "Spring 2026")
+            ta = load_adjustments(DATA_DIR, term)
+            active = [a.model_dump() for a in ta.adjustments if a.enabled]
+
+            llm_result = await llm.parse_message(
+                message=request.message,
+                history=request.history or [],
+                config=disk_cfg,
+                active_adjustments=active,
+            )
+
+            # If LLM didn't error out, use its result
+            if llm_result.get("intent") != "unknown" or not llm_result.get("error"):
+                # Persist any adjustments the LLM extracted
+                new_adjustments = []
+                for adj_data in llm_result.get("adjustments", []):
+                    scope = adj_data.get("scope", {})
+                    adj = Adjustment(
+                        type=adj_data.get("type", "output"),
+                        parameter=adj_data.get("parameter"),
+                        operation=adj_data.get("operation"),
+                        value=adj_data.get("value", 0),
+                        scope=AdjustmentScope(
+                            course=scope.get("course"),
+                            campus=scope.get("campus"),
+                        ),
+                        reason=adj_data.get("reason", ""),
+                        source="llm",
+                    )
+                    add_adjustment(DATA_DIR, term, adj)
+                    new_adjustments.append(adj.model_dump())
+
+                # If LLM found adjustments, treat intent as "adjust" for the frontend
+                intent = llm_result.get("intent", "unknown")
+                if new_adjustments and intent == "unknown":
+                    intent = "adjust"
+
+                return ChatResponse(
+                    message=llm_result.get("response_text", ""),
+                    parsedCommand={
+                        "intent": intent,
+                        "parameters": llm_result.get("parameters", {}),
+                        "confidence": llm_result.get("confidence", 0.5),
+                    },
+                    adjustments=new_adjustments if new_adjustments else None,
+                    llm_used=True,
+                )
+
+        # Fallback to regex parser
         parsed = parser.parse(request.message, request.context or {})
         response_text = parser.get_response(parsed)
 
@@ -231,7 +327,8 @@ async def chat(request: ChatRequest):
                 "intent": parsed.get("intent", "unknown"),
                 "parameters": parsed.get("parameters", {}),
                 "confidence": parsed.get("confidence", 0.0),
-            }
+            },
+            llm_used=False,
         )
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to process chat request")
@@ -239,7 +336,10 @@ async def chat(request: ChatRequest):
 
 @app.post("/api/forecast", response_model=ForecastResponse)
 def run_forecast(request: ForecastRequest):
-    """Run forecast for specified term using real sequence-based logic."""
+    """Run forecast for specified term using real sequence-based logic.
+
+    Automatically loads and applies any active adjustments for the term.
+    """
     try:
         # Load config from disk, overlay any request-level overrides
         disk_cfg = _read_disk_config()
@@ -249,6 +349,22 @@ def run_forecast(request: ForecastRequest):
         progression_rate = float(req_cfg.get("progressionRate", req_cfg.get("progression_rate", disk_cfg.get("progression_rate", 0.95))))
         buffer_percent = float(req_cfg.get("bufferPercent", req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0))))
 
+        # Use the requested term, falling back to config default
+        target_term = request.term or disk_cfg.get("default_term", "Spring 2026")
+
+        # Load adjustments for this term
+        ta = load_adjustments(DATA_DIR, target_term)
+        active_adjustments = [a for a in ta.adjustments if a.enabled]
+
+        # Apply config-level adjustments (global ones modify capacity/progression/buffer)
+        if active_adjustments:
+            adjusted_cfg = apply_config_adjustments(
+                active_adjustments, capacity, progression_rate, buffer_percent
+            )
+            capacity = adjusted_cfg["capacity"]
+            progression_rate = adjusted_cfg["progression_rate"]
+            buffer_percent = adjusted_cfg["buffer_percent"]
+
         # Resolve data file paths (relative paths are relative to PROJECT_ROOT)
         def resolve(key: str, default: str) -> Path:
             raw = disk_cfg.get(key, default)
@@ -257,9 +373,6 @@ def run_forecast(request: ForecastRequest):
 
         sequence_map_path = resolve("sequence_map", "Data/FOUN_sequencing_map_by_major.csv")
         enrollment_source_path = resolve("enrollment_source", "Data/Master Schedule of Classes.csv")
-
-        # Use the requested term, falling back to config default
-        target_term = request.term or disk_cfg.get("default_term", "Spring 2026")
 
         # Run the real forecast
         rows = run_sequence_forecast(
@@ -307,6 +420,10 @@ def run_forecast(request: ForecastRequest):
                         method_label = "Ratio-based"
                         break
 
+        # Apply output-level adjustments to rows
+        if active_adjustments and rows:
+            rows = apply_output_adjustments(active_adjustments, rows, capacity)
+
         # Load previous forecast for change comparison (best-effort)
         previous: Dict = {}
         for pattern in [
@@ -337,11 +454,13 @@ def run_forecast(request: ForecastRequest):
                     sections=row["sections"],
                     change=change,
                     changePercent=change_pct,
+                    adjusted=row.get("adjusted"),
                 )
             )
 
         total_students = sum(r.projectedSeats for r in results)
         total_sections = sum(r.sections for r in results)
+        adj_count = len(active_adjustments) if active_adjustments else 0
 
         return ForecastResponse(
             results=results,
@@ -350,6 +469,7 @@ def run_forecast(request: ForecastRequest):
                 totalSections=total_sections,
                 coursesForecasted=len(set(r.course for r in results)),
                 method=method_label,
+                adjustmentsApplied=adj_count if adj_count > 0 else None,
             ),
         )
     except FileNotFoundError:
@@ -359,6 +479,98 @@ def run_forecast(request: ForecastRequest):
     except Exception:
         raise HTTPException(status_code=500, detail="Forecast computation failed")
 
+
+# ============== Adjustment Routes ==============
+
+@app.get("/api/adjustments/{term}")
+def get_adjustments(term: str):
+    """List all adjustments for a term."""
+    ta = load_adjustments(DATA_DIR, term)
+    return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
+
+
+@app.post("/api/adjustments/{term}")
+def create_adjustment(term: str, request: AdjustmentRequest):
+    """Add a new adjustment for a term."""
+    scope = AdjustmentScope(
+        course=request.scope.get("course") if request.scope else None,
+        campus=request.scope.get("campus") if request.scope else None,
+    )
+    adj = Adjustment(
+        type=request.type,
+        parameter=request.parameter,
+        operation=request.operation,
+        value=request.value,
+        scope=scope,
+        reason=request.reason,
+        source="manual",
+    )
+    ta = add_adjustment(DATA_DIR, term, adj)
+    return {"term": ta.term, "adjustment": adj.model_dump()}
+
+
+@app.put("/api/adjustments/{term}/{adj_id}/toggle")
+def toggle_adj(term: str, adj_id: str):
+    """Toggle an adjustment on/off."""
+    ta = toggle_adjustment(DATA_DIR, term, adj_id)
+    return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
+
+
+@app.delete("/api/adjustments/{term}/{adj_id}")
+def delete_adjustment(term: str, adj_id: str):
+    """Remove an adjustment."""
+    ta = remove_adjustment(DATA_DIR, term, adj_id)
+    return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
+
+
+# ============== LLM Config Routes ==============
+
+@app.get("/api/llm/status")
+def llm_status():
+    """Check if LLM is configured. Never returns the API key."""
+    disk_cfg = _read_disk_config()
+    llm_cfg = disk_cfg.get("llm", {})
+    provider = llm_cfg.get("provider", "none")
+    has_key = bool(load_api_key()) if provider not in ("none", "ollama") else True
+    llm = create_llm_service(disk_cfg)
+    configured = llm.is_configured() if llm else False
+    return {
+        "provider": provider,
+        "model": llm_cfg.get("model"),
+        "base_url": llm_cfg.get("base_url"),
+        "has_key": has_key,
+        "configured": configured,
+    }
+
+
+@app.put("/api/llm/config")
+def update_llm_config(request: LLMConfigRequest):
+    """Update LLM provider/model/key. Writes key to .env.local, rest to config."""
+    disk_cfg = _read_disk_config()
+    llm_cfg = disk_cfg.get("llm", {})
+
+    if request.provider is not None:
+        llm_cfg["provider"] = request.provider
+    if request.model is not None:
+        llm_cfg["model"] = request.model
+    if request.base_url is not None:
+        llm_cfg["base_url"] = request.base_url if request.base_url else None
+    if request.api_key is not None:
+        save_api_key(request.api_key)
+
+    disk_cfg["llm"] = llm_cfg
+    _write_disk_config(disk_cfg)
+
+    has_key = bool(load_api_key()) if llm_cfg.get("provider") not in ("none", "ollama") else True
+    return {
+        "success": True,
+        "provider": llm_cfg.get("provider", "none"),
+        "model": llm_cfg.get("model"),
+        "configured": has_key and llm_cfg.get("provider", "none") != "none",
+    }
+
+
+# ============== Existing Routes ==============
 
 @app.get("/api/terms", response_model=TermsResponse)
 def list_terms():

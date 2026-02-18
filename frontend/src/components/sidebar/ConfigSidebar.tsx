@@ -3,6 +3,7 @@
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ForecastConfig } from '@/lib/types';
+import { LLMSettings } from './LLMSettings';
 
 interface ConfigSidebarProps {
     config: ForecastConfig;
@@ -143,6 +144,11 @@ export function ConfigSidebar({
                         <PencilIcon className="h-3 w-3 mr-1" />
                         Edit
                     </Button>
+                </ConfigSection>
+
+                {/* AI Assistant */}
+                <ConfigSection title="AI Assistant">
+                    <LLMSettings />
                 </ConfigSection>
             </div>
 

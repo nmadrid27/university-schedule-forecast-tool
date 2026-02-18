@@ -22,6 +22,9 @@ export function useChat(config?: ForecastConfig) {
     const [forecastResults, setForecastResults] = useState<ForecastResult[] | null>(null);
     const [forecastSummary, setForecastSummary] = useState<ForecastSummary | null>(null);
 
+    // Callback to signal adjustment changes (parent component can reload adjustments)
+    const [lastAdjustmentChange, setLastAdjustmentChange] = useState(0);
+
     const sendMessage = useCallback(async (content: string) => {
         // Add user message
         const userMessage: Message = {
@@ -34,16 +37,28 @@ export function useChat(config?: ForecastConfig) {
         setIsLoading(true);
 
         try {
-            // Send to API
-            const response = await api.sendMessage({ message: content });
+            // Build conversation history for LLM (last 20 messages)
+            const allMessages = [...messages, userMessage];
+            const history = allMessages.slice(-20).map((m) => ({
+                role: m.role,
+                content: m.content,
+            }));
 
-            // Check if this is a forecast command
-            if (response.parsedCommand?.intent === 'forecast') {
-                // Use the term parsed from the message, or fall back to the config term
+            // Send to API with history and current term
+            const response = await api.sendMessage({
+                message: content,
+                history,
+                term: config?.term,
+            });
+
+            const intent = response.parsedCommand?.intent;
+            const shouldRunForecast = intent === 'forecast' || intent === 'adjust';
+
+            // Run forecast if intent is forecast or adjust
+            if (shouldRunForecast) {
                 const parsedTerm = response.parsedCommand.parameters.term as string;
                 const forecastTerm = parsedTerm || config?.term || 'Spring 2026';
 
-                // Run the forecast with current config
                 const forecastResponse = await api.runForecast({
                     term: forecastTerm,
                     method: 'sequence',
@@ -61,6 +76,11 @@ export function useChat(config?: ForecastConfig) {
                 });
             }
 
+            // If adjustments were extracted, signal a change
+            if (response.adjustments && response.adjustments.length > 0) {
+                setLastAdjustmentChange(Date.now());
+            }
+
             // Add assistant response
             const assistantMessage: Message = {
                 id: generateId(),
@@ -72,6 +92,8 @@ export function useChat(config?: ForecastConfig) {
                         ...response.parsedCommand,
                         raw_message: content,
                     },
+                    adjustments: response.adjustments as NonNullable<Message['metadata']>['adjustments'],
+                    llm_used: response.llm_used,
                 },
             };
             setMessages((prev) => [...prev, assistantMessage]);
@@ -98,7 +120,7 @@ export function useChat(config?: ForecastConfig) {
         } finally {
             setIsLoading(false);
         }
-    }, [config]);
+    }, [config, messages]);
 
     const clearMessages = useCallback(() => {
         setMessages([
@@ -120,6 +142,7 @@ export function useChat(config?: ForecastConfig) {
         clearMessages,
         forecastResults,
         forecastSummary,
+        lastAdjustmentChange,
     };
 }
 

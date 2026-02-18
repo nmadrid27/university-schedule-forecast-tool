@@ -17,3 +17,7 @@ openpyxl>=3.1.0
 
 # Visualization
 plotly>=5.18.0
+
+# LLM providers (optional — only needed if configuring AI assistant)
+openai>=1.12.0
+anthropic>=0.18.0

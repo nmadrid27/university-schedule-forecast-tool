@@ -30,7 +30,14 @@ export function DataTable({ data }: DataTableProps) {
                 <TableBody>
                     {data.map((row, index) => (
                         <TableRow key={`${row.course}-${row.campus}-${index}`}>
-                            <TableCell className="font-medium">{row.course}</TableCell>
+                            <TableCell className="font-medium">
+                                <span className="inline-flex items-center gap-1.5">
+                                    {row.adjusted && (
+                                        <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" title="Adjusted" />
+                                    )}
+                                    {row.course}
+                                </span>
+                            </TableCell>
                             <TableCell className="text-muted-foreground">{row.campus}</TableCell>
                             <TableCell className="text-right">{Math.round(row.projectedSeats)}</TableCell>
                             <TableCell className="text-right">{row.sections}</TableCell>

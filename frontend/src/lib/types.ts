@@ -7,6 +7,18 @@ export interface Message {
   timestamp: Date;
   metadata?: {
     parsedCommand?: ParsedCommand;
+    adjustments?: Array<{
+      id: string;
+      type: string;
+      parameter?: string | null;
+      operation?: string | null;
+      value: number;
+      scope: { course?: string | null; campus?: string | null };
+      reason: string;
+      enabled: boolean;
+      source: string;
+    }>;
+    llm_used?: boolean;
   };
 }
 
@@ -24,6 +36,7 @@ export interface ForecastResult {
   sections: number;
   change?: number;
   changePercent?: number;
+  adjusted?: boolean;
 }
 
 export interface ForecastSummary {
@@ -33,6 +46,7 @@ export interface ForecastSummary {
   accuracy?: number;
   method: string;
   lastUpdated: Date;
+  adjustmentsApplied?: number;
 }
 
 export interface ForecastConfig {
