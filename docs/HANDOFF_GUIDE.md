@@ -32,7 +32,11 @@ You only need to do this once. These steps install the software that the tool ne
 
 1. Open the `forecast-tool` folder
 2. Double-click **`install.command`**
-3. If macOS asks "Are you sure you want to open this?", click **Open**
+3. **macOS will likely block it** the first time. If you see a security warning:
+   - Open **System Settings > Privacy & Security**
+   - Scroll down to find the blocked file message
+   - Click **Open Anyway**
+   - You only need to do this once per `.command` file
 4. A Terminal window will appear showing progress:
    ```
    [1/5] Checking Homebrew...

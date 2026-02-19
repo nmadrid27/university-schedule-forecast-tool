@@ -107,7 +107,7 @@ Pure functions — no argparse, no sys.exit. Entry points:
 - `resolve_term_info()` — parses "Spring 2026" into term codes + feeder terms
 - `load_previous_forecast()` — reads existing CSVs for change delta comparison
 
-The `forecast_tool/` package contains reusable time-series models (Prophet, ETS, ARIMA), data loaders, and diagnostics. Streamlit-era `chat/` and `ui/` subpackages have been archived to `deprecated/`.
+The `forecast_tool/` package contains reusable time-series models (Prophet, ETS, ARIMA), data loaders, and diagnostics.
 
 ## Domain Logic (SCAD-Specific)
 
@@ -172,15 +172,13 @@ Distribution: Git repo with `.git/` for updates, or plain ZIP (update features d
 - Python 3.14.2 via Homebrew (Apple Silicon)
 - Virtual env: `.venv/` at project root
 - Unified `requirements.txt` at root (includes `openai`, `anthropic` for LLM support); `api/requirements.txt` → `-r ../requirements.txt`
-- Deprecated Streamlit interfaces archived in `deprecated/`
 
 ## Current State & Known Gaps
 
 - No test suites or test framework
 - No CI/CD pipeline
 - `hooks/useChat.ts` mock responses active when backend unavailable
-- `README.md` has stale defaults (capacity 25, Prophet weight 0.6) — actual config uses capacity 20, progression_rate 0.95
-- `.venv/` has broken symlinks (Python 3.13 was upgraded to 3.14); recreate with `python3 -m venv .venv`
+- `.venv/` may have broken symlinks after Python upgrades; recreate with `python3 -m venv .venv`
 - CLI scripts (`forecast_*_from_sequence_guides.py`) lack the anchor-course dedup that `api/forecaster.py` has — can produce slightly inflated results
 - `forecast_fall26_foun.py` has a term code pairing bug (pairs Spring N with Fall N-1 instead of Fall N due to SCAD academic year convention)
 - `os.chdir()` in ensemble/diagnostics endpoints is not thread-safe under concurrent requests
