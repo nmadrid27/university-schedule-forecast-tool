@@ -14,7 +14,6 @@ interface ResultsPanelProps {
     results: ForecastResult[] | null;
     summary: ForecastSummary | null;
     onDownload?: () => void;
-    onCompare?: () => void;
     adjustments?: Adjustment[];
     onToggleAdjustment?: (id: string) => void;
     onRemoveAdjustment?: (id: string) => void;
@@ -24,7 +23,6 @@ export function ResultsPanel({
     results,
     summary,
     onDownload,
-    onCompare,
     adjustments = [],
     onToggleAdjustment,
     onRemoveAdjustment,
@@ -41,10 +39,10 @@ export function ResultsPanel({
                 </div>
                 <div className="flex-1 flex items-center justify-center p-8">
                     <div className="text-center max-w-sm">
-                        <div className="text-6xl mb-4">📊</div>
+                        <ChartIcon className="h-16 w-16 mx-auto mb-4 text-muted-foreground/40" />
                         <h3 className="text-lg font-medium mb-2">No Forecast Yet</h3>
                         <p className="text-sm text-muted-foreground">
-                            Ask me to &quot;Forecast a term&quot; or select one from the sidebar to see enrollment projections here.
+                            Type &quot;Forecast Spring 2026&quot; in the chat to see enrollment projections here.
                         </p>
                     </div>
                 </div>
@@ -77,9 +75,6 @@ export function ResultsPanel({
                         <Button variant="outline" size="sm" onClick={onDownload} disabled={!onDownload}>
                             <DownloadIcon className="h-4 w-4 mr-1" />
                             CSV
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={onCompare} disabled={!onCompare}>
-                            Compare
                         </Button>
                     </div>
                 </div>
@@ -138,6 +133,25 @@ function DownloadIcon({ className }: { className?: string }) {
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" x2="12" y1="15" y2="3" />
+        </svg>
+    );
+}
+
+function ChartIcon({ className }: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <line x1="12" x2="12" y1="20" y2="10" />
+            <line x1="18" x2="18" y1="20" y2="4" />
+            <line x1="6" x2="6" y1="20" y2="16" />
         </svg>
     );
 }

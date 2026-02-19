@@ -177,11 +177,11 @@ Distribution: Git repo with `.git/` for updates, or plain ZIP (update features d
 
 - No test suites or test framework
 - No CI/CD pipeline
-- `hooks/useChat.ts` mock responses active when backend unavailable
 - `.venv/` may have broken symlinks after Python upgrades; recreate with `python3 -m venv .venv`
 - CLI scripts (`forecast_*_from_sequence_guides.py`) lack the anchor-course dedup that `api/forecaster.py` has — can produce slightly inflated results
 - `forecast_fall26_foun.py` has a term code pairing bug (pairs Spring N with Fall N-1 instead of Fall N due to SCAD academic year convention)
 - `os.chdir()` in ensemble/diagnostics endpoints is not thread-safe under concurrent requests
+- Frontend loads config from backend on mount (`api.getConfig()`), but sidebar changes only update React state — not persisted to disk until a PUT /api/config call is added
 
 ## Code Standards
 

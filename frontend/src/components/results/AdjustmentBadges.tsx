@@ -34,17 +34,17 @@ export function AdjustmentBadges({ adjustments, onToggle, onRemove }: Adjustment
             <span className="text-[10px] opacity-60">AI</span>
           )}
           {adjustmentLabel(adj)}
-          <span
+          <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onRemove(adj.id);
             }}
             className="ml-1 hover:text-red-500 cursor-pointer"
-            role="button"
-            aria-label="Remove adjustment"
+            aria-label={`Remove ${adjustmentLabel(adj)} adjustment`}
           >
             &times;
-          </span>
+          </button>
         </button>
       ))}
     </div>

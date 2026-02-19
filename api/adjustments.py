@@ -152,6 +152,7 @@ def apply_output_adjustments(
         r = dict(row)
         was_adjusted = False
         seats = r["projected_seats"]
+        row_capacity = capacity  # may be overridden by scoped config adjustment
 
         for adj in adjustments:
             if not adj.enabled:
@@ -172,11 +173,13 @@ def apply_output_adjustments(
                         seats = adj.value
                     was_adjusted = True
                 elif adj.type == "config" and adj.parameter == "capacity":
-                    # Scoped capacity override -- recalc sections later
+                    row_capacity = max(1, min(100, int(adj.value)))
                     was_adjusted = True
 
         r["projected_seats"] = seats
-        r["sections"] = int(math.ceil(seats / capacity)) if capacity > 0 and seats > 0 else 0
+        if was_adjusted:
+            r["sections"] = int(math.ceil(seats / row_capacity)) if row_capacity > 0 and seats > 0 else 0
+        # Preserve original sections for unadjusted rows
         r["adjusted"] = was_adjusted
         output.append(r)
 

@@ -70,48 +70,14 @@ export function ConfigSidebar({
 
             {/* Config sections */}
             <div className="flex-1 p-4 space-y-6 overflow-y-auto">
-                {/* Data Source */}
-                <ConfigSection title="Data Source">
-                    <div className="text-sm text-muted-foreground">
-                        Internal Data Lake, Banner
-                    </div>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="mt-1 h-7 px-2 text-xs"
-                        aria-label="Edit data source"
-                    >
-                        <PencilIcon className="h-3 w-3 mr-1" />
-                        Edit
-                    </Button>
-                </ConfigSection>
-
-                {/* Model Selection */}
-                <ConfigSection title="Model Selection">
-                    <div className="space-y-1">
-                        <div className="text-sm font-medium">Sequence-based v2.1</div>
-                        <div className="text-xs text-muted-foreground">
-                            Confidence Level: <span className="text-green-500">95%</span>
-                        </div>
-                    </div>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="mt-1 h-7 px-2 text-xs"
-                        aria-label="Edit model selection"
-                    >
-                        <PencilIcon className="h-3 w-3 mr-1" />
-                        Edit
-                    </Button>
-                </ConfigSection>
-
                 {/* Forecast Horizon */}
                 <ConfigSection title="Forecast Horizon">
+                    <label htmlFor="config-term" className="sr-only">Select forecast term</label>
                     <select
+                        id="config-term"
                         value={config.term}
                         onChange={(e) => onConfigChange?.({ term: e.target.value })}
-                        className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        aria-label="Select forecast term"
+                        className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
                     >
                         {TERM_OPTIONS.map((t) => (
                             <option key={t} value={t}>{t}</option>
@@ -121,29 +87,63 @@ export function ConfigSidebar({
 
                 {/* Parameters */}
                 <ConfigSection title="Parameters">
-                    <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                            <span className="text-muted-foreground">Capacity</span>
-                            <span>{config.capacity} students</span>
+                    <div className="space-y-3">
+                        <div>
+                            <label htmlFor="config-capacity" className="text-xs text-muted-foreground mb-1 block">
+                                Section Capacity
+                            </label>
+                            <input
+                                id="config-capacity"
+                                type="number"
+                                min={1}
+                                max={100}
+                                value={config.capacity}
+                                onChange={(e) => onConfigChange?.({ capacity: Math.max(1, Math.min(100, Number(e.target.value))) })}
+                                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
                         </div>
-                        <div className="flex justify-between">
-                            <span className="text-muted-foreground">Progression</span>
-                            <span>{(config.progressionRate * 100).toFixed(0)}%</span>
+                        <div>
+                            <label htmlFor="config-progression" className="text-xs text-muted-foreground mb-1 block">
+                                Progression Rate
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    id="config-progression"
+                                    type="range"
+                                    min={0}
+                                    max={100}
+                                    value={Math.round(config.progressionRate * 100)}
+                                    onChange={(e) => onConfigChange?.({ progressionRate: Number(e.target.value) / 100 })}
+                                    className="flex-1"
+                                />
+                                <span className="text-sm font-medium w-12 text-right">{(config.progressionRate * 100).toFixed(0)}%</span>
+                            </div>
                         </div>
-                        <div className="flex justify-between">
-                            <span className="text-muted-foreground">Buffer</span>
-                            <span>{config.bufferPercent}%</span>
+                        <div>
+                            <label htmlFor="config-buffer" className="text-xs text-muted-foreground mb-1 block">
+                                Buffer
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    id="config-buffer"
+                                    type="range"
+                                    min={0}
+                                    max={100}
+                                    value={config.bufferPercent}
+                                    onChange={(e) => onConfigChange?.({ bufferPercent: Number(e.target.value) })}
+                                    className="flex-1"
+                                />
+                                <span className="text-sm font-medium w-12 text-right">{config.bufferPercent}%</span>
+                            </div>
                         </div>
                     </div>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="mt-2 h-7 px-2 text-xs"
-                        aria-label="Edit parameters"
-                    >
-                        <PencilIcon className="h-3 w-3 mr-1" />
-                        Edit
-                    </Button>
+                </ConfigSection>
+
+                {/* Model Info */}
+                <ConfigSection title="Model">
+                    <div className="text-sm text-muted-foreground">
+                        Sequence-based v2.1
+                    </div>
                 </ConfigSection>
 
                 {/* AI Assistant */}
@@ -201,23 +201,6 @@ function SettingsIcon({ className }: { className?: string }) {
         >
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
-        </svg>
-    );
-}
-
-function PencilIcon({ className }: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={className}
-        >
-            <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
         </svg>
     );
 }

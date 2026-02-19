@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import * as ScrollAreaPrimitive from '@radix-ui/react-scroll-area';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { ScrollBar } from '@/components/ui/scroll-area';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { Message } from '@/lib/types';
@@ -44,36 +44,38 @@ export function ChatWindow({ messages, isLoading, onSendMessage }: ChatWindowPro
             </div>
 
             {/* Messages area */}
-            <ScrollArea className="flex-1">
+            <ScrollAreaPrimitive.Root className="flex-1 relative overflow-hidden">
                 <ScrollAreaPrimitive.Viewport
                     ref={viewportRef}
                     onScroll={handleScroll}
-                    className="flex-1 p-4"
+                    className="size-full p-4"
                 >
-                    <div className="max-w-3xl mx-auto">
+                    <div className="max-w-3xl mx-auto" role="log" aria-live="polite" aria-label="Chat messages">
                     {messages.map((message) => (
                         <MessageBubble key={message.id} message={message} />
                     ))}
 
                     {/* Loading indicator */}
                     {isLoading && (
-                        <div className="flex gap-3 mb-4">
+                        <div className="flex gap-3 mb-4" role="status">
                             <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center shrink-0">
                                 <span className="text-sm font-medium text-white">AI</span>
                             </div>
                             <div className="bg-card border border-border rounded-lg px-4 py-3">
-                                <div className="flex gap-1">
+                                <div className="flex gap-1" aria-hidden="true">
                                     <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                                     <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                                     <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                                 </div>
+                                <span className="sr-only">Thinking...</span>
                             </div>
                         </div>
                     )}
                 </div>
                 </ScrollAreaPrimitive.Viewport>
                 <ScrollBar />
-            </ScrollArea>
+                <ScrollAreaPrimitive.Corner />
+            </ScrollAreaPrimitive.Root>
 
             {/* Input */}
             <ChatInput onSend={onSendMessage} isLoading={isLoading} />

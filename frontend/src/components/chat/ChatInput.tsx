@@ -60,6 +60,7 @@ export function ChatInput({
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={isLoading}
+                    aria-label="Chat message"
                     className="flex-1 bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-ring min-h-[44px] max-h-[200px] resize-none"
                     rows={1}
                 />
@@ -86,7 +87,7 @@ export function ChatInput({
                             key={action}
                             onClick={() => onSend(action)}
                             disabled={isLoading}
-                            className="shrink-0 px-3 py-1.5 text-xs font-medium rounded-full border border-border bg-muted/30 hover:bg-muted transition-colors disabled:opacity-50"
+                            className="shrink-0 px-4 py-2.5 min-h-[44px] text-xs font-medium rounded-full border border-border bg-muted/30 hover:bg-muted transition-colors disabled:opacity-50 cursor-pointer"
                         >
                             {action}
                         </button>

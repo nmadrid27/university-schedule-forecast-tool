@@ -144,11 +144,15 @@ class SimpleCommandParser:
 What would you like to do?"""
 
         elif intent == 'settings':
-            return """Current forecast settings:
+            cfg = _read_disk_config()
+            cap = cfg.get("capacity", 20)
+            prog = cfg.get("progression_rate", 0.95)
+            buf = cfg.get("buffer_percent", 10.0)
+            return f"""Current forecast settings:
 
-• **Capacity**: 20 students/section
-• **Progression Rate**: 95%
-• **Buffer**: 10%
+• **Capacity**: {cap} students/section
+• **Progression Rate**: {prog * 100:.0f}%
+• **Buffer**: {buf:.0f}%
 • **Method**: Sequence-based
 
 You can adjust these by saying "Set capacity to 25" or "Change buffer to 15%"."""
@@ -347,7 +351,7 @@ def run_forecast(request: ForecastRequest):
 
         capacity = int(req_cfg.get("capacity", disk_cfg.get("capacity", 20)))
         progression_rate = float(req_cfg.get("progressionRate", req_cfg.get("progression_rate", disk_cfg.get("progression_rate", 0.95))))
-        buffer_percent = float(req_cfg.get("bufferPercent", req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0))))
+        buffer_percent = float(req_cfg.get("bufferPercent", req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 10.0))))
 
         # Use the requested term, falling back to config default
         target_term = request.term or disk_cfg.get("default_term", "Spring 2026")
@@ -424,16 +428,14 @@ def run_forecast(request: ForecastRequest):
         if active_adjustments and rows:
             rows = apply_output_adjustments(active_adjustments, rows, capacity)
 
-        # Load previous forecast for change comparison (best-effort)
+        # Load previous forecast for change comparison (best-effort).
+        # Only compare against the same term's prior forecast to avoid
+        # misleading change deltas from cross-term comparisons.
         previous: Dict = {}
-        for pattern in [
-            f"Data/{target_term.replace(' ', '_')}_FOUN_Forecast*.csv",
-            "Data/*_FOUN_Forecast*.csv",
-        ]:
-            matches = sorted(PROJECT_ROOT.glob(pattern))
-            if matches:
-                previous = load_previous_forecast(matches[-1])
-                break
+        term_pattern = f"Data/{target_term.replace(' ', '_')}_FOUN_Forecast*.csv"
+        term_matches = sorted(PROJECT_ROOT.glob(term_pattern))
+        if term_matches:
+            previous = load_previous_forecast(term_matches[-1])
 
         results = []
         for row in rows:
@@ -674,7 +676,7 @@ def get_config():
     return ConfigModel(
         capacity=int(disk_cfg.get("capacity", 20)),
         progressionRate=float(disk_cfg.get("progression_rate", 0.95)),
-        bufferPercent=float(disk_cfg.get("buffer_percent", 0.0)),
+        bufferPercent=float(disk_cfg.get("buffer_percent", 10.0)),
         quartersToForecast=int(disk_cfg.get("quarters_to_forecast", 2)),
         defaultTerm=disk_cfg.get("default_term", "Spring 2026"),
     )

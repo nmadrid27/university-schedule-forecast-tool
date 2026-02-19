@@ -320,8 +320,20 @@ def load_crosswalk(crosswalk_path: Path) -> Dict[str, str]:
     return mapping
 
 
-def load_term_enrollments(path: Path, term_code: Optional[str] = None) -> Dict[Tuple[str, str], float]:
+def load_term_enrollments(
+    path: Path,
+    term_code: Optional[str] = None,
+    crosswalk: Optional[Dict[str, str]] = None,
+) -> Dict[Tuple[str, str], float]:
+    """Load enrollment totals per (campus, course) from a term CSV or Master Schedule.
+
+    Args:
+        crosswalk: Optional legacy→FOUN code mapping. When provided, rows with
+            legacy subject codes (DRAW, DSGN, etc.) are mapped to their FOUN
+            equivalents so feeder enrollment is not silently dropped.
+    """
     totals: Dict[Tuple[str, str], float] = defaultdict(float)
+    xwalk = crosswalk or {}
     with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         fieldnames = [name or "" for name in (reader.fieldnames or [])]
@@ -330,6 +342,7 @@ def load_term_enrollments(path: Path, term_code: Optional[str] = None) -> Dict[T
         for row in reader:
             if has_course:
                 course = (row.get("Course") or "").strip()
+                course = xwalk.get(course, course)
                 if not course.startswith("FOUN "):
                     continue
                 enrollment = parse_number(row.get("Enrollment"))
@@ -344,12 +357,13 @@ def load_term_enrollments(path: Path, term_code: Optional[str] = None) -> Dict[T
                 if term_code and term_value != str(term_code):
                     continue
                 subj = (row.get("SUBJ") or "").strip().upper()
-                if subj != "FOUN":
-                    continue
                 crs = (row.get("CRS NUMBER") or "").strip()
                 if not crs:
                     continue
-                course = f"{subj} {crs}"
+                raw_course = f"{subj} {crs}"
+                course = xwalk.get(raw_course, raw_course)
+                if not course.startswith("FOUN "):
+                    continue
                 enrollment = parse_number(row.get("ACT ENR"))
                 campus_code = (row.get("CAMPUS") or "").strip().upper()
                 # Only model Savannah (SAV) and SCADnow (NOW); skip Atlanta (ATL) and other campuses.
@@ -466,8 +480,12 @@ def run_sequence_forecast(
         farther_quarter=farther["quarter"],
     )
 
-    farther_enrollments = load_term_enrollments(enrollment_source_path, farther["term_code"])
-    closer_enrollments = load_term_enrollments(enrollment_source_path, closer["term_code"])
+    # Load crosswalk so legacy course codes (DRAW, DSGN) map to FOUN
+    crosswalk_path = enrollment_source_path.parent / "sequence_crosswalk_template.csv"
+    crosswalk = load_crosswalk(crosswalk_path)
+
+    farther_enrollments = load_term_enrollments(enrollment_source_path, farther["term_code"], crosswalk=crosswalk)
+    closer_enrollments = load_term_enrollments(enrollment_source_path, closer["term_code"], crosswalk=crosswalk)
 
     farther_multiplier = progression_rate ** farther["multiplier_exp"]
     closer_multiplier = progression_rate ** closer["multiplier_exp"]

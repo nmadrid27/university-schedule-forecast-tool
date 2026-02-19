@@ -7,6 +7,7 @@ import { HistorySidebar, ConfigSidebar } from '@/components/sidebar';
 import { useChat } from '@/hooks/useChat';
 import { useAdjustments } from '@/hooks/useAdjustments';
 import { ForecastConfig } from '@/lib/types';
+import { api } from '@/lib/api';
 
 export default function Home() {
   const [config, setConfig] = useState<ForecastConfig>({
@@ -20,7 +21,24 @@ export default function Home() {
   const { messages, isLoading, sendMessage, clearMessages, forecastResults, forecastSummary, lastAdjustmentChange } = useChat(config);
   const { adjustments, toggleAdjustment, removeAdjustment, loadAdjustments } = useAdjustments(config.term);
 
-  const [showConfig] = useState(true);
+  const [showConfig, setShowConfig] = useState(true);
+
+  // Load config from backend on mount so frontend and disk stay in sync
+  useEffect(() => {
+    api.getConfig()
+      .then((diskConfig) => {
+        setConfig((prev) => ({
+          ...prev,
+          capacity: diskConfig.capacity,
+          progressionRate: diskConfig.progressionRate,
+          bufferPercent: diskConfig.bufferPercent,
+          quartersToForecast: diskConfig.quartersToForecast,
+        }));
+      })
+      .catch(() => {
+        // Backend not running — keep hardcoded defaults
+      });
+  }, []);
 
   // Reload adjustments when LLM extracts new ones via chat
   useEffect(() => {
@@ -62,20 +80,17 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }, [forecastResults, config.term]);
 
-  const handleCompare = useCallback(() => {
-    // TODO: Implement compare functionality
-    console.log('Compare feature not yet implemented');
-  }, []);
-
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
-      {/* Left Sidebar - History */}
-      <HistorySidebar onNewChat={handleNewChat} />
+      {/* Left Sidebar - History (hidden on small screens) */}
+      <div className="hidden lg:block">
+        <HistorySidebar onNewChat={handleNewChat} />
+      </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex">
-        {/* Chat Panel (40%) */}
-        <div className="w-[40%] min-w-[400px] border-r border-border">
+      <div className="flex-1 flex flex-col md:flex-row min-w-0">
+        {/* Chat Panel */}
+        <div className="md:w-[40%] md:min-w-[320px] h-1/2 md:h-full border-b md:border-b-0 md:border-r border-border">
           <ChatWindow
             messages={messages}
             isLoading={isLoading}
@@ -83,13 +98,12 @@ export default function Home() {
           />
         </div>
 
-        {/* Results Panel (60%) */}
-        <div className="flex-1">
+        {/* Results Panel */}
+        <div className="flex-1 min-w-0 h-1/2 md:h-full">
           <ResultsPanel
             results={forecastResults}
             summary={forecastSummary}
-            onDownload={handleDownload}
-            onCompare={handleCompare}
+            onDownload={forecastResults ? handleDownload : undefined}
             adjustments={adjustments}
             onToggleAdjustment={toggleAdjustment}
             onRemoveAdjustment={removeAdjustment}
@@ -98,16 +112,12 @@ export default function Home() {
       </div>
 
       {/* Right Sidebar - Config */}
-      {showConfig && (
-        <ConfigSidebar
-          config={config}
-          onConfigChange={handleConfigChange}
-          onToggleCollapse={() => {
-            // TODO: Add a way to re-open the sidebar
-            console.log('Config sidebar collapsed');
-          }}
-        />
-      )}
+      <ConfigSidebar
+        config={config}
+        onConfigChange={handleConfigChange}
+        onToggleCollapse={() => setShowConfig((prev) => !prev)}
+        isCollapsed={!showConfig}
+      />
     </div>
   );
 }

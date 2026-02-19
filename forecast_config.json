@@ -3,6 +3,7 @@
   "enrollment_source": "Data/Master Schedule of Classes.csv",
   "capacity": 20,
   "progression_rate": 0.95,
+  "buffer_percent": 10,
   "default_term": "Spring 2026",
   "llm": {
     "provider": "none",

@@ -90,8 +90,9 @@ export function LLMSettings() {
 
       {/* Provider select */}
       <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Provider</label>
+        <label htmlFor="llm-provider" className="text-xs text-muted-foreground mb-1 block">Provider</label>
         <select
+          id="llm-provider"
           value={provider}
           onChange={(e) => {
             setProvider(e.target.value);
@@ -113,8 +114,9 @@ export function LLMSettings() {
       {/* Model */}
       {provider !== 'none' && (
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Model</label>
+          <label htmlFor="llm-model" className="text-xs text-muted-foreground mb-1 block">Model</label>
           <input
+            id="llm-model"
             type="text"
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -127,8 +129,9 @@ export function LLMSettings() {
       {/* Base URL */}
       {needsUrl && (
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Base URL</label>
+          <label htmlFor="llm-base-url" className="text-xs text-muted-foreground mb-1 block">Base URL</label>
           <input
+            id="llm-base-url"
             type="text"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
@@ -141,10 +144,11 @@ export function LLMSettings() {
       {/* API Key */}
       {needsKey && (
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">
-            API Key {status?.has_key && <span className="text-green-500">(saved)</span>}
+          <label htmlFor="llm-api-key" className="text-xs text-muted-foreground mb-1 block">
+            API Key {status?.has_key && <span className="text-green-400">(saved)</span>}
           </label>
           <input
+            id="llm-api-key"
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
