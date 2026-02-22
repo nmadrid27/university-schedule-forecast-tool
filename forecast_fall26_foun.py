@@ -54,7 +54,7 @@ try:
             course_ratios = []
             for year in range(2020, 2026):
                 spring_term = int(f"{year}30")
-                fall_term = int(f"{year}10")
+                fall_term = int(f"{year + 1}10")  # Fall YYYY uses academic year YYYY+1 (e.g. Fall 2023 = 202410)
 
                 spring_enr = spring_terms[spring_terms['TERM'] == spring_term]['ACT ENR'].sum()
                 fall_enr = fall_terms[fall_terms['TERM'] == fall_term]['ACT ENR'].sum()
