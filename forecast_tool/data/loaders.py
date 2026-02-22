@@ -4,21 +4,29 @@ Extracted from app.py for modularity.
 """
 
 import logging
+import os
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
-def load_course_mapping():
+def load_course_mapping(data_dir: str | None = None):
     """
     Load course code mapping from Data/sequence_crosswalk_template.csv.
+
+    Args:
+        data_dir: Absolute path to the Data directory. When omitted, falls back
+                  to the relative path "Data/" (requires cwd = project root).
 
     Returns:
         dict: Mapping from legacy course codes to FOUN course codes.
               Returns empty dict if file not found or error occurs.
     """
     try:
-        crosswalk_path = "Data/sequence_crosswalk_template.csv"
+        if data_dir:
+            crosswalk_path = os.path.join(data_dir, "sequence_crosswalk_template.csv")
+        else:
+            crosswalk_path = "Data/sequence_crosswalk_template.csv"
         df_cross = pd.read_csv(crosswalk_path)
         # Create dictionary: legacy_code -> foun_code
         # Strip whitespace just in case
@@ -32,9 +40,13 @@ def load_course_mapping():
         return {}
 
 
-def load_historical_data():
+def load_historical_data(data_dir: str | None = None):
     """
     Load and process historical data from Data/FOUN_Historical.csv.
+
+    Args:
+        data_dir: Absolute path to the Data directory. When omitted, falls back
+                  to the relative path "Data/" (requires cwd = project root).
 
     Returns:
         pd.DataFrame: Processed historical enrollment data with columns:
@@ -42,7 +54,10 @@ def load_historical_data():
             Returns empty DataFrame if file not found or error occurs.
     """
     try:
-        hist_path = "Data/FOUN_Historical.csv"
+        if data_dir:
+            hist_path = os.path.join(data_dir, "FOUN_Historical.csv")
+        else:
+            hist_path = "Data/FOUN_Historical.csv"
         df_hist = pd.read_csv(hist_path)
 
         # Process columns
@@ -75,7 +90,7 @@ def load_historical_data():
         df_hist[['quarter', 'year']] = df_hist['TERM'].apply(lambda x: pd.Series(parse_term(x)))
 
         # Apply Course Mapping
-        mapping = load_course_mapping()
+        mapping = load_course_mapping(data_dir=data_dir)
         if mapping:
             # Use map to replace, fillna with original to keep codes that don't need mapping
             df_hist['course_code'] = df_hist['course_code'].map(mapping).fillna(df_hist['course_code'])

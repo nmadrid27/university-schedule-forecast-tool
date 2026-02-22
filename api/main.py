@@ -777,13 +777,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
         capacity = int(req_cfg.get("capacity", disk_cfg.get("capacity", 20)))
         buffer_percent = float(req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0)))
 
-        # forecast_tool loaders use relative paths from project root
-        prev_cwd = os.getcwd()
-        os.chdir(PROJECT_ROOT)
-        try:
-            df_hist = load_historical_data()
-        finally:
-            os.chdir(prev_cwd)
+        df_hist = load_historical_data(data_dir=str(DATA_DIR))
         if df_hist.empty:
             raise HTTPException(status_code=404, detail="Historical data not found or empty")
 
@@ -913,12 +907,7 @@ def run_diagnostics():
     from forecast_tool.diagnostics.stationarity_test import analyze_all_courses
 
     try:
-        prev_cwd = os.getcwd()
-        os.chdir(PROJECT_ROOT)
-        try:
-            df_hist = load_historical_data()
-        finally:
-            os.chdir(prev_cwd)
+        df_hist = load_historical_data(data_dir=str(DATA_DIR))
         if df_hist.empty:
             raise HTTPException(status_code=404, detail="Historical data not found or empty")
 
