@@ -84,6 +84,25 @@ def parse_quarter_courses(cell_value: str) -> List[Tuple[str, float]]:
     return [(course, weight) for course in courses]
 
 
+def _select_anchor_courses(
+    courses: List[Tuple[str, float]],
+    freq: Dict[str, int],
+) -> List[Tuple[str, float]]:
+    """Pick one representative from concurrent co-requisites to avoid double-counting.
+
+    CHOICE courses (weight < 1.0) are alternatives — kept as-is.
+    Concurrent courses (weight >= 1.0) are co-requisites taken by the same cohort;
+    only the most-frequently-appearing one is kept as the anchor.
+    """
+    if not courses:
+        return courses
+    concurrent = [(c, w) for c, w in courses if w >= 1.0]
+    if len(concurrent) <= 1:
+        return courses
+    best = max(concurrent, key=lambda cw: freq.get(cw[0], 0))
+    return [best]
+
+
 def load_sequence_mappings(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]:
     mappings = {
         "SAVANNAH": {
@@ -98,6 +117,21 @@ def load_sequence_mappings(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]
         },
     }
 
+    # Pass 1: count how often each concurrent course appears as a feeder source.
+    # Used to select the best anchor when multiple co-requisites are present in a row.
+    spring_freq: Dict[str, int] = defaultdict(int)
+    summer_freq: Dict[str, int] = defaultdict(int)
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            for c, w in parse_quarter_courses(row.get("spring")):
+                if w >= 1.0:
+                    spring_freq[c] += 1
+            for c, w in parse_quarter_courses(row.get("summer")):
+                if w >= 1.0:
+                    summer_freq[c] += 1
+
+    # Pass 2: build mappings using anchor-filtered source courses.
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -105,11 +139,14 @@ def load_sequence_mappings(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]
             if not campuses:
                 continue
 
-            spring_courses = parse_quarter_courses(row.get("spring"))
-            summer_courses = parse_quarter_courses(row.get("summer"))
+            spring_raw = parse_quarter_courses(row.get("spring"))
+            summer_raw = parse_quarter_courses(row.get("summer"))
             fall_courses = parse_quarter_courses(row.get("fall"))
             if not fall_courses:
                 continue
+
+            spring_courses = _select_anchor_courses(spring_raw, spring_freq)
+            summer_courses = _select_anchor_courses(summer_raw, summer_freq)
 
             for campus in ("SAVANNAH", "SCADNOW"):
                 if not campus_matches(campuses, campus):
@@ -118,10 +155,14 @@ def load_sequence_mappings(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]
                 for fall_course, fall_weight in fall_courses:
                     mappings[campus]["fall_counts"][fall_course] += fall_weight
 
-                for spring_course, spring_weight in spring_courses:
-                    for fall_course, fall_weight in fall_courses:
-                        key = (spring_course, fall_course)
-                        mappings[campus]["spring_to_fall"][key] += spring_weight * fall_weight
+                # Only use the spring (farther) feeder for rows with no summer course.
+                # When a row has both, those students will be captured via the summer
+                # path — counting them via spring too would double-count the same cohort.
+                if not summer_courses:
+                    for spring_course, spring_weight in spring_courses:
+                        for fall_course, fall_weight in fall_courses:
+                            key = (spring_course, fall_course)
+                            mappings[campus]["spring_to_fall"][key] += spring_weight * fall_weight
 
                 for summer_course, summer_weight in summer_courses:
                     for fall_course, fall_weight in fall_courses:
