@@ -121,6 +121,8 @@ class ApiClient {
         capacity: number;
         progressionRate: number;
         bufferPercent: number;
+        quartersToForecast: number;
+        defaultTerm: string;
     }>) {
         return this.request<{ success: boolean }>('/api/config', {
             method: 'PUT',

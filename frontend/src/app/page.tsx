@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { ChatWindow } from '@/components/chat';
 import { ResultsPanel } from '@/components/results';
 import { HistorySidebar, ConfigSidebar } from '@/components/sidebar';
@@ -22,6 +22,8 @@ export default function Home() {
   const { adjustments, toggleAdjustment, removeAdjustment, loadAdjustments } = useAdjustments(config.term);
 
   const [showConfig, setShowConfig] = useState(true);
+  const initialLoadDone = useRef(false);
+  const configSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load config from backend on mount so frontend and disk stay in sync
   useEffect(() => {
@@ -37,8 +39,29 @@ export default function Home() {
       })
       .catch(() => {
         // Backend not running — keep hardcoded defaults
+      })
+      .finally(() => {
+        initialLoadDone.current = true;
       });
   }, []);
+
+  // Persist config changes to disk (debounced, skips initial load)
+  useEffect(() => {
+    if (!initialLoadDone.current) return;
+    if (configSaveTimer.current) clearTimeout(configSaveTimer.current);
+    configSaveTimer.current = setTimeout(() => {
+      api.updateConfig({
+        capacity: config.capacity,
+        progressionRate: config.progressionRate,
+        bufferPercent: config.bufferPercent,
+        quartersToForecast: config.quartersToForecast,
+        defaultTerm: config.term,
+      }).catch(() => {});
+    }, 500);
+    return () => {
+      if (configSaveTimer.current) clearTimeout(configSaveTimer.current);
+    };
+  }, [config.capacity, config.progressionRate, config.bufferPercent, config.quartersToForecast, config.term]);
 
   // Reload adjustments when LLM extracts new ones via chat
   useEffect(() => {
