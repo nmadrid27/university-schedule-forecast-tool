@@ -107,7 +107,7 @@ Pure functions — no argparse, no sys.exit. Entry points:
 - `resolve_term_info()` — parses "Spring 2026" into term codes + feeder terms
 - `load_previous_forecast()` — reads existing CSVs for change delta comparison
 
-The `forecast_tool/` package contains reusable time-series models (Prophet, ETS, ARIMA), data loaders, and diagnostics.
+The `forecast_tool/` package contains reusable time-series models (Prophet, ETS, ARIMA), data loaders, and diagnostics. `forecast_tool/data/loaders.py` accepts an optional `data_dir` absolute path — callers in `api/main.py` pass `DATA_DIR` explicitly so no `os.chdir()` is needed.
 
 ## Domain Logic (SCAD-Specific)
 
@@ -173,15 +173,17 @@ Distribution: Git repo with `.git/` for updates, or plain ZIP (update features d
 - Virtual env: `.venv/` at project root
 - Unified `requirements.txt` at root (includes `openai`, `anthropic` for LLM support); `api/requirements.txt` → `-r ../requirements.txt`
 
+## LLM Configuration
+
+Provider: **Anthropic** (`claude-haiku-4-5-20251001`). API key stored in `.env.local` (gitignored). Configure via the AI Assistant section in the Config sidebar — never via the terminal (would expose the key in shell history). To rotate: revoke at console.anthropic.com, then re-enter through the UI.
+
+`GET /api/llm/status` returns `configured: true/false` and `has_key: bool` — never the key itself.
+
 ## Current State & Known Gaps
 
 - No test suites or test framework
 - No CI/CD pipeline
 - `.venv/` may have broken symlinks after Python upgrades; recreate with `python3 -m venv .venv`
-- CLI scripts (`forecast_*_from_sequence_guides.py`) lack the anchor-course dedup that `api/forecaster.py` has — can produce slightly inflated results
-- `forecast_fall26_foun.py` has a term code pairing bug (pairs Spring N with Fall N-1 instead of Fall N due to SCAD academic year convention)
-- `os.chdir()` in ensemble/diagnostics endpoints is not thread-safe under concurrent requests
-- Frontend loads config from backend on mount (`api.getConfig()`), but sidebar changes only update React state — not persisted to disk until a PUT /api/config call is added
 
 ## Code Standards
 
