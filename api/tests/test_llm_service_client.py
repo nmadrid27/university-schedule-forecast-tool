@@ -1,0 +1,256 @@
+"""Tests for LLMService class, create_llm_service, load_api_key, save_api_key.
+
+parse_llm_response is already covered in test_llm_service.py.
+build_system_prompt is already covered in test_llm_service_prompt.py.
+"""
+
+import sys
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import llm_service as svc_mod
+from llm_service import (
+    LLMService,
+    create_llm_service,
+    load_api_key,
+    save_api_key,
+)
+
+
+# ─── load_api_key ─────────────────────────────────────────────────────────
+
+class TestLoadApiKey:
+    def test_reads_from_env_var(self, monkeypatch):
+        monkeypatch.setenv("LLM_API_KEY", "env-key-xyz")
+        assert load_api_key() == "env-key-xyz"
+
+    def test_reads_from_env_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        env_file = tmp_path / ".env.local"
+        env_file.write_text('LLM_API_KEY=file-key-abc\n')
+        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        assert load_api_key() == "file-key-abc"
+
+    def test_strips_quotes_from_file_value(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        env_file = tmp_path / ".env.local"
+        env_file.write_text('LLM_API_KEY="quoted-key"\n')
+        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        assert load_api_key() == "quoted-key"
+
+    def test_returns_none_when_no_env_var_and_no_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setattr(svc_mod, "ENV_FILE", tmp_path / ".env.local")
+        assert load_api_key() is None
+
+    def test_env_var_takes_priority_over_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LLM_API_KEY", "env-wins")
+        env_file = tmp_path / ".env.local"
+        env_file.write_text("LLM_API_KEY=file-key\n")
+        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        assert load_api_key() == "env-wins"
+
+
+# ─── save_api_key ─────────────────────────────────────────────────────────
+
+class TestSaveApiKey:
+    def test_creates_file_when_not_exists(self, tmp_path, monkeypatch):
+        env_file = tmp_path / ".env.local"
+        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        save_api_key("new-key")
+        assert "LLM_API_KEY=new-key" in env_file.read_text()
+
+    def test_updates_existing_key(self, tmp_path, monkeypatch):
+        env_file = tmp_path / ".env.local"
+        env_file.write_text("LLM_API_KEY=old-key\n")
+        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        save_api_key("updated-key")
+        content = env_file.read_text()
+        assert "LLM_API_KEY=updated-key" in content
+        assert "LLM_API_KEY=old-key" not in content
+
+    def test_preserves_other_env_vars(self, tmp_path, monkeypatch):
+        env_file = tmp_path / ".env.local"
+        env_file.write_text("OTHER_VAR=keep-me\nLLM_API_KEY=old\n")
+        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        save_api_key("new-key")
+        assert "OTHER_VAR=keep-me" in env_file.read_text()
+
+
+# ─── LLMService.is_configured ─────────────────────────────────────────────
+
+class TestIsConfigured:
+    def test_openai_with_key_is_configured(self):
+        service = LLMService(provider="openai", api_key="sk-test")
+        assert service.is_configured() is True
+
+    def test_openai_without_key_not_configured(self, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setattr(svc_mod, "ENV_FILE", Path("/nonexistent/.env.local"))
+        service = LLMService(provider="openai")
+        assert service.is_configured() is False
+
+    def test_anthropic_with_key_is_configured(self):
+        service = LLMService(provider="anthropic", api_key="sk-ant-test")
+        assert service.is_configured() is True
+
+    def test_anthropic_without_key_not_configured(self, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setattr(svc_mod, "ENV_FILE", Path("/nonexistent/.env.local"))
+        service = LLMService(provider="anthropic")
+        assert service.is_configured() is False
+
+    def test_ollama_always_configured_no_key_needed(self, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setattr(svc_mod, "ENV_FILE", Path("/nonexistent/.env.local"))
+        service = LLMService(provider="ollama")
+        assert service.is_configured() is True
+
+    def test_picks_up_default_model_for_known_provider(self):
+        service = LLMService(provider="openai", api_key="sk-test")
+        assert service.model == "gpt-4o-mini"
+
+    def test_custom_model_overrides_default(self):
+        service = LLMService(provider="openai", model="gpt-4o", api_key="sk-test")
+        assert service.model == "gpt-4o"
+
+
+# ─── create_llm_service ───────────────────────────────────────────────────
+
+class TestCreateLLMService:
+    def test_returns_none_for_provider_none(self):
+        assert create_llm_service({"llm": {"provider": "none"}}) is None
+
+    def test_returns_none_when_no_llm_section(self):
+        assert create_llm_service({}) is None
+
+    def test_returns_llm_service_for_openai(self):
+        result = create_llm_service({"llm": {"provider": "openai", "model": "gpt-4o-mini"}})
+        assert isinstance(result, LLMService)
+        assert result.provider == "openai"
+        assert result.model == "gpt-4o-mini"
+
+    def test_returns_llm_service_for_anthropic(self):
+        result = create_llm_service({"llm": {"provider": "anthropic"}})
+        assert isinstance(result, LLMService)
+        assert result.provider == "anthropic"
+
+    def test_uses_default_model_when_none_in_config(self):
+        result = create_llm_service({"llm": {"provider": "anthropic"}})
+        assert result is not None
+        assert result.model is not None  # default filled in
+
+    def test_passes_base_url_to_service(self):
+        result = create_llm_service({
+            "llm": {"provider": "ollama", "base_url": "http://myhost:11434/v1"}
+        })
+        assert result is not None
+        assert result.base_url == "http://myhost:11434/v1"
+
+
+# ─── parse_message (mocked HTTP clients) ──────────────────────────────────
+
+_VALID_JSON = (
+    '{"intent": "forecast", "parameters": {"term": "Spring 2026"}, '
+    '"adjustments": [], "confidence": 0.9}'
+)
+
+
+class TestParseMessage:
+    @pytest.mark.asyncio
+    async def test_anthropic_path_returns_parsed_intent(self):
+        service = LLMService(provider="anthropic", api_key="sk-ant-test")
+
+        mock_resp = MagicMock()
+        mock_resp.content = [MagicMock(text=_VALID_JSON)]
+
+        with patch("anthropic.AsyncAnthropic") as MockClass:
+            mock_client = AsyncMock()
+            mock_client.messages.create = AsyncMock(return_value=mock_resp)
+            MockClass.return_value = mock_client
+
+            result = await service.parse_message("forecast spring 2026", [], {}, [])
+
+        assert result["intent"] == "forecast"
+        assert result["parameters"]["term"] == "Spring 2026"
+
+    @pytest.mark.asyncio
+    async def test_openai_path_returns_parsed_intent(self):
+        service = LLMService(provider="openai", api_key="sk-test")
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = _VALID_JSON
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+
+        with patch("openai.AsyncOpenAI") as MockClass:
+            mock_client = AsyncMock()
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+            MockClass.return_value = mock_client
+
+            result = await service.parse_message("forecast spring 2026", [], {}, [])
+
+        assert result["intent"] == "forecast"
+
+    @pytest.mark.asyncio
+    async def test_anthropic_api_error_returns_fallback(self):
+        service = LLMService(provider="anthropic", api_key="sk-ant-test")
+
+        with patch("anthropic.AsyncAnthropic") as MockClass:
+            mock_client = AsyncMock()
+            mock_client.messages.create = AsyncMock(
+                side_effect=Exception("connection refused")
+            )
+            MockClass.return_value = mock_client
+
+            result = await service.parse_message("hello", [], {}, [])
+
+        assert result["intent"] == "unknown"
+        assert result["confidence"] == 0.0
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_openai_api_error_returns_fallback(self):
+        service = LLMService(provider="openai", api_key="sk-test")
+
+        with patch("openai.AsyncOpenAI") as MockClass:
+            mock_client = AsyncMock()
+            mock_client.chat.completions.create = AsyncMock(
+                side_effect=Exception("timeout")
+            )
+            MockClass.return_value = mock_client
+
+            result = await service.parse_message("hello", [], {}, [])
+
+        assert result["intent"] == "unknown"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_history_is_included_in_anthropic_messages(self):
+        service = LLMService(provider="anthropic", api_key="sk-ant-test")
+
+        mock_resp = MagicMock()
+        mock_resp.content = [MagicMock(text=_VALID_JSON)]
+        captured_kwargs = {}
+
+        async def capture(**kw):
+            captured_kwargs.update(kw)
+            return mock_resp
+
+        with patch("anthropic.AsyncAnthropic") as MockClass:
+            mock_client = AsyncMock()
+            mock_client.messages.create = capture
+            MockClass.return_value = mock_client
+
+            history = [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "Hi!"},
+            ]
+            await service.parse_message("forecast", history, {}, [])
+
+        # The 2 history messages + 1 current message = 3
+        assert len(captured_kwargs["messages"]) == 3
