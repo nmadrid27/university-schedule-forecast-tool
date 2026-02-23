@@ -21,3 +21,8 @@ plotly>=5.18.0
 # LLM providers (optional — only needed if configuring AI assistant)
 openai>=1.12.0
 anthropic>=0.18.0
+
+# Testing
+pytest>=9.0.0
+pytest-asyncio>=1.0.0
+httpx>=0.27.0
