@@ -17,35 +17,34 @@ export function AdjustmentBadges({ adjustments, onToggle, onRemove }: Adjustment
         Adjustments:
       </span>
       {adjustments.map((adj) => (
-        <button
-          key={adj.id}
-          onClick={() => onToggle(adj.id)}
-          className={`
-            inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium
-            transition-colors cursor-pointer
-            ${adj.enabled
-              ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-300'
-              : 'bg-muted/50 border-border text-muted-foreground line-through'
-            }
-          `}
-          title={adj.reason || (adj.enabled ? 'Click to disable' : 'Click to enable')}
-        >
-          {adj.source === 'llm' && (
-            <span className="text-[10px] opacity-60">AI</span>
-          )}
-          {adjustmentLabel(adj)}
+        <div key={adj.id} className="inline-flex items-center rounded-full border overflow-hidden">
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove(adj.id);
-            }}
-            className="ml-1 hover:text-red-500 cursor-pointer"
+            onClick={() => onToggle(adj.id)}
+            className={`
+              inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium
+              transition-colors cursor-pointer
+              ${adj.enabled
+                ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-300'
+                : 'bg-muted/50 border-border text-muted-foreground line-through'
+              }
+            `}
+            title={adj.reason || (adj.enabled ? 'Click to disable' : 'Click to enable')}
+          >
+            {adj.source === 'llm' && (
+              <span className="text-[10px] opacity-60">AI</span>
+            )}
+            {adjustmentLabel(adj)}
+          </button>
+          <button
+            type="button"
+            onClick={() => onRemove(adj.id)}
+            className="px-2 py-1 text-xs hover:text-red-500 cursor-pointer transition-colors"
             aria-label={`Remove ${adjustmentLabel(adj)} adjustment`}
           >
             &times;
           </button>
-        </button>
+        </div>
       ))}
     </div>
   );

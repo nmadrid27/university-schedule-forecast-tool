@@ -21,7 +21,7 @@ interface HistorySidebarProps {
 export function HistorySidebar({ onNewChat, onSelectConversation, conversations = [], isCollapsed = false }: HistorySidebarProps) {
     if (isCollapsed) {
         return (
-            <div className="w-12 border-r border-border bg-muted/20 flex flex-col items-center py-4">
+            <div className="hidden lg:flex flex-col items-center w-12 border-r border-border bg-muted/20 py-4">
                 <Button variant="ghost" size="icon" onClick={onNewChat} aria-label="New chat">
                     <PlusIcon className="h-5 w-5" />
                 </Button>
@@ -37,7 +37,7 @@ export function HistorySidebar({ onNewChat, onSelectConversation, conversations 
     }, {} as Record<string, Conversation[]>);
 
     return (
-        <div className="w-64 border-r border-border bg-muted/20 flex flex-col">
+        <div className="hidden lg:flex flex-col w-64 border-r border-border bg-muted/20">
             {/* Header */}
             <div className="p-4">
                 <Button onClick={onNewChat} variant="outline" className="w-full justify-start gap-2">

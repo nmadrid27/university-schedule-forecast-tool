@@ -105,10 +105,8 @@ export default function Home() {
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
-      {/* Left Sidebar - History (hidden on small screens) */}
-      <div className="hidden lg:block">
-        <HistorySidebar onNewChat={handleNewChat} />
-      </div>
+      {/* Left Sidebar - History (hidden on small screens via component className) */}
+      <HistorySidebar onNewChat={handleNewChat} />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col md:flex-row min-w-0">

@@ -66,6 +66,15 @@ describe('AdjustmentBadges', () => {
     expect(badge.className).toContain('line-through');
   });
 
+  it('remove button is not nested inside the badge button', () => {
+    render(
+      <AdjustmentBadges adjustments={[makeAdj()]} onToggle={() => {}} onRemove={() => {}} />
+    );
+    const removeBtn = screen.getByRole('button', { name: /remove/i });
+    // Walk up from the parent — if × is inside another button, parentElement.closest('button') is non-null
+    expect(removeBtn.parentElement!.closest('button')).toBeNull();
+  });
+
   it('shows AI label for LLM-sourced adjustments', () => {
     render(
       <AdjustmentBadges
