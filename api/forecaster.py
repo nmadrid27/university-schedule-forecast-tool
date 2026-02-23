@@ -37,7 +37,19 @@ def resolve_term_info(target_term: str) -> Dict:
         closer_feeder: {quarter, term_code, multiplier_exp},
         farther_feeder: {quarter, term_code, multiplier_exp}
     """
-    parts = target_term.strip().split()
+    target_term = target_term.strip()
+    # Accept YYYYQQ numeric term codes (e.g. "202630") and convert to "Quarter YYYY"
+    if re.match(r'^\d{6}$', target_term):
+        code_year = int(target_term[:4])
+        code_suffix = int(target_term[4:])
+        suffix_to_quarter = {10: "fall", 20: "winter", 30: "spring", 40: "summer"}
+        if code_suffix not in suffix_to_quarter:
+            raise ValueError(f"Invalid term code suffix '{code_suffix}' in '{target_term}'. Expected 10/20/30/40.")
+        q = suffix_to_quarter[code_suffix]
+        cal_year = code_year - 1 if code_suffix == 10 else code_year
+        target_term = f"{q.capitalize()} {cal_year}"
+
+    parts = target_term.split()
     if len(parts) != 2:
         raise ValueError(f"Invalid target_term format: '{target_term}'. Expected 'Quarter YYYY'.")
     quarter_name = parts[0].lower()

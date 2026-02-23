@@ -134,6 +134,7 @@ Then provide your natural language response.
 - confidence should reflect how sure you are about the parsed intent (0.0 to 1.0).
 - Parameters should only include fields that were explicitly mentioned or clearly implied.
 - Valid parameter ranges: capacity 1-100, progression_rate 0.0-1.0, buffer_percent 0-100.
+- term MUST always be in "Quarter YYYY" format (e.g. "Spring 2026") — never use numeric term codes like "202630".
 """
 
 
