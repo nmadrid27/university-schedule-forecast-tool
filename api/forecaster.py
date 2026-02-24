@@ -27,6 +27,25 @@ QUARTER_CYCLE = {
 # SCAD term code quarter digits
 QUARTER_CODES = {"fall": 10, "winter": 20, "spring": 30, "summer": 40}
 
+# FOUN curriculum launched Fall 2025 (AY 2025-2026).  Each subsequent AY
+# adds one more cohort year until all four years are represented.
+_FOUN_CURRICULUM_START = 2025
+_YEAR_LABELS = ["First Year", "Second Year", "Third Year", "Fourth Year"]
+
+
+def _active_curriculum_years(term_code: str) -> Optional[List[str]]:
+    """Return curriculum year labels active for the given SCAD term code.
+
+    SCAD codes are YYYYQQ.  For all quarters, AY start = YYYY - 1 (e.g.
+    202630 → AY 2025-2026, start=2025).  Returns None once all four years
+    are covered (Fall 2028 / AY 2028-2029 onward), meaning no filter needed.
+    """
+    yyyy = int(str(term_code)[:4])
+    n = yyyy - _FOUN_CURRICULUM_START
+    if n >= len(_YEAR_LABELS):
+        return None
+    return _YEAR_LABELS[:n]
+
 
 def resolve_term_info(target_term: str) -> Dict:
     """Parse a human-readable term like 'Summer 2026' into quarter info
@@ -202,8 +221,14 @@ def load_sequence_mappings(
     target_quarter: str,
     closer_quarter: str,
     farther_quarter: str,
+    year_filter: Optional[List[str]] = None,
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     """Load the sequencing map CSV and build mappings for the given quarters.
+
+    Args:
+        year_filter: When provided, only rows whose ``year`` column value is in
+            this list are included.  Pass ``_active_curriculum_years(term_code)``
+            to automatically exclude cohort years that don't exist yet.
 
     Returns per-campus dicts with keys:
         farther_to_target     – source→target weights, only from rows with no closer course
@@ -239,6 +264,8 @@ def load_sequence_mappings(
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            if year_filter is not None and row.get("year", "").strip() not in year_filter:
+                continue
             for c, w in parse_quarter_courses(row.get(closer_quarter)):
                 if w >= 1.0:
                     closer_freq[c] += 1
@@ -250,6 +277,8 @@ def load_sequence_mappings(
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            if year_filter is not None and row.get("year", "").strip() not in year_filter:
+                continue
             campuses = parse_campuses(row.get("campus", ""))
             if not campuses:
                 continue
@@ -496,11 +525,13 @@ def run_sequence_forecast(
     closer = info["closer_feeder"]
     farther = info["farther_feeder"]
 
+    year_filter = _active_curriculum_years(info["target_term_code"])
     mappings = load_sequence_mappings(
         sequence_map_path,
         target_quarter=target_quarter,
         closer_quarter=closer["quarter"],
         farther_quarter=farther["quarter"],
+        year_filter=year_filter,
     )
 
     # Load crosswalk so legacy course codes (DRAW, DSGN) map to FOUN

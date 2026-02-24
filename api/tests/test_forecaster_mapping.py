@@ -5,6 +5,9 @@ load_sequence_mappings: two-pass anchor selection; dual-feeder path (closer vs f
 
 _compute_historical_ratios: TERM-code parsing; per-year ratio averaging; zero-feeder/
     zero-target guard; crosswalk application; non-FOUN exclusion; missing file guard.
+
+_active_curriculum_years: returns correct year labels based on how many years of the
+    new FOUN curriculum have elapsed since its Fall 2025 start.
 """
 
 import sys
@@ -14,7 +17,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from forecaster import _compute_historical_ratios, load_sequence_mappings
+from forecaster import (
+    _active_curriculum_years,
+    _compute_historical_ratios,
+    load_sequence_mappings,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -206,3 +213,74 @@ class TestComputeHistoricalRatios:
         p = _hist_csv(tmp_path, ["FOUN,110,80,202230"])  # no summer row
         result = _compute_historical_ratios(p, "40", "30")
         assert "FOUN 110" not in result
+
+
+# ── load_sequence_mappings year_filter ───────────────────────────────────────
+
+class TestYearFilter:
+    def test_year_filter_excludes_second_year_routes(self, tmp_path):
+        """When year_filter=["First Year"], second-year rows must not contribute
+        to target_counts or routing tables."""
+        p = _seq_csv(tmp_path, [
+            "PROG A,BFA,GENERAL,First Year,FOUN 110,,FOUN 220,",
+            "PROG B,BFA,GENERAL,Second Year,,FOUN 251,FOUN 220,",
+        ])
+        m = load_sequence_mappings(p, "spring", "winter", "fall",
+                                   year_filter=["First Year"])
+        # First-year farther route must be present
+        assert m["SAVANNAH"]["farther_to_target"][("FOUN 110", "FOUN 220")] == pytest.approx(1.0)
+        # Second-year closer route must be absent
+        assert ("FOUN 251", "FOUN 220") not in m["SAVANNAH"]["closer_to_target"]
+
+    def test_year_filter_none_includes_all_years(self, tmp_path):
+        """year_filter=None (default) must include all rows regardless of year."""
+        p = _seq_csv(tmp_path, [
+            "PROG A,BFA,GENERAL,First Year,FOUN 110,,FOUN 220,",
+            "PROG B,BFA,GENERAL,Second Year,,FOUN 251,FOUN 220,",
+        ])
+        m = load_sequence_mappings(p, "spring", "winter", "fall", year_filter=None)
+        assert ("FOUN 110", "FOUN 220") in m["SAVANNAH"]["farther_to_target"]
+        assert ("FOUN 251", "FOUN 220") in m["SAVANNAH"]["closer_to_target"]
+
+    def test_year_filter_source_totals_exclude_filtered_rows(self, tmp_path):
+        """closer_source_totals must only count rows that pass the year filter."""
+        p = _seq_csv(tmp_path, [
+            # First Year: FOUN 112 Winter → FOUN 220 Spring
+            "PROG A,BFA,GENERAL,First Year,,FOUN 112,FOUN 220,",
+            # Second Year: FOUN 112 Winter, no Spring target (should dilute without filter)
+            "PROG B,BFA,GENERAL,Second Year,,FOUN 112,,",
+        ])
+        # Without filter: PROG B contributes 1.0 to closer_source_totals → total=2.0
+        m_all = load_sequence_mappings(p, "spring", "winter", "fall", year_filter=None)
+        assert m_all["SAVANNAH"]["closer_source_totals"]["FOUN 112"] == pytest.approx(2.0)
+
+        # With First Year filter: only PROG A counted → total=1.0
+        m_filtered = load_sequence_mappings(p, "spring", "winter", "fall",
+                                            year_filter=["First Year"])
+        assert m_filtered["SAVANNAH"]["closer_source_totals"]["FOUN 112"] == pytest.approx(1.0)
+
+
+# ── _active_curriculum_years ─────────────────────────────────────────────────
+
+class TestActiveCurriculumYears:
+    def test_spring_2026_returns_first_year_only(self):
+        """Spring 2026 is Year 1 of the FOUN curriculum → only First Year rows apply."""
+        assert _active_curriculum_years("202630") == ["First Year"]
+
+    def test_fall_2026_returns_first_and_second_year(self):
+        """Fall 2026 is Year 2 of the curriculum → First + Second Year apply."""
+        assert _active_curriculum_years("202710") == ["First Year", "Second Year"]
+
+    def test_spring_2027_returns_first_and_second_year(self):
+        """Spring 2027 is still within Year 2 of the curriculum."""
+        assert _active_curriculum_years("202730") == ["First Year", "Second Year"]
+
+    def test_fall_2027_returns_three_years(self):
+        assert _active_curriculum_years("202810") == [
+            "First Year", "Second Year", "Third Year"
+        ]
+
+    def test_fall_2028_and_beyond_returns_none(self):
+        """Once all four years are covered, no filter needed → return None."""
+        assert _active_curriculum_years("202910") is None
+        assert _active_curriculum_years("203010") is None
