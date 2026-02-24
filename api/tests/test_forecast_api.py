@@ -156,3 +156,72 @@ def test_forecast_returns_500_on_unexpected_error(monkeypatch):
     )
     r = client.post("/api/forecast", json={"term": "Spring 2026"})
     assert r.status_code == 500
+
+
+# --------------- Ratio fallback -------------------------------------------
+
+def test_forecast_falls_back_to_ratio_when_sequence_empty(monkeypatch, tmp_path):
+    """When run_sequence_forecast returns [], the endpoint calls run_ratio_forecast
+    and reports method='Ratio-based'."""
+    monkeypatch.setattr(main, "run_sequence_forecast", lambda **kw: [])
+    # Control term resolution so the feeder glob pattern is deterministic
+    monkeypatch.setattr(main, "resolve_term_info", lambda term: {
+        "closer_feeder": {"quarter": "spring", "term_code": "202630"},
+    })
+    monkeypatch.setattr(main, "term_code_to_label", lambda tc: "Spring 2026")
+    # Feeder CSV must exist in DATA_DIR (= tmp_path) to satisfy the glob
+    (tmp_path / "Spring_2026_FOUN_Forecast_Sequence_Guides.csv").touch()
+    monkeypatch.setattr(main, "run_ratio_forecast", lambda **kw: [_FAKE_ROW])
+
+    body = client.post("/api/forecast", json={"term": "Summer 2026"}).json()
+    assert body["summary"]["method"] == "Ratio-based"
+
+
+def test_forecast_ratio_fallback_passes_target_term(monkeypatch, tmp_path):
+    """run_ratio_forecast receives the correct target_term."""
+    captured: dict = {}
+    monkeypatch.setattr(main, "run_sequence_forecast", lambda **kw: [])
+    monkeypatch.setattr(main, "resolve_term_info", lambda term: {
+        "closer_feeder": {"quarter": "spring", "term_code": "202630"},
+    })
+    monkeypatch.setattr(main, "term_code_to_label", lambda tc: "Spring 2026")
+    (tmp_path / "Spring_2026_FOUN_Forecast_Sequence_Guides.csv").touch()
+
+    def capture_ratio(**kw):
+        captured.update(kw)
+        return [_FAKE_ROW]
+
+    monkeypatch.setattr(main, "run_ratio_forecast", capture_ratio)
+    client.post("/api/forecast", json={"term": "Summer 2026"})
+    assert captured.get("target_term") == "Summer 2026"
+
+
+# --------------- Change delta ---------------------------------------------
+
+def test_forecast_change_delta_when_previous_forecast_exists(monkeypatch, tmp_path):
+    """Results include change and changePercent when a prior forecast CSV exists."""
+    # The endpoint globs PROJECT_ROOT / "Data/{term}_FOUN_Forecast*.csv"
+    # (PROJECT_ROOT is tmp_path, set by the autouse fixture)
+    data_subdir = tmp_path / "Data"
+    data_subdir.mkdir()
+    (data_subdir / "Spring_2026_FOUN_Forecast_prior.csv").touch()
+    # Previous run had 80 students for FOUN 110 / SAV
+    monkeypatch.setattr(
+        main, "load_previous_forecast",
+        lambda path: {("FOUN 110", "SAV"): 80},
+    )
+
+    body = client.post("/api/forecast", json={"term": "Spring 2026"}).json()
+    result = body["results"][0]
+    # _FAKE_ROW projected_seats=100; prev=80 → change=20, changePercent=25.0
+    assert result["change"] == 20
+    assert result["changePercent"] == pytest.approx(25.0)
+
+
+def test_forecast_no_change_delta_without_previous_forecast():
+    """change and changePercent are null when no prior forecast CSV exists."""
+    # No Data/Spring_2026_FOUN_Forecast*.csv in PROJECT_ROOT (tmp_path)
+    body = client.post("/api/forecast", json={"term": "Spring 2026"}).json()
+    result = body["results"][0]
+    assert result.get("change") is None
+    assert result.get("changePercent") is None
