@@ -10,11 +10,12 @@ get_available_terms scans the Master Schedule for distinct TERM values.
 import sys
 from pathlib import Path
 
+import openpyxl
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from forecaster import get_available_terms, load_term_enrollments
+from forecaster import get_available_terms, load_admits_foun_demand, load_term_enrollments
 
 
 # ── Fixture helpers ────────────────────────────────────────────────────────────
@@ -186,3 +187,81 @@ class TestGetAvailableTerms:
         csv.write_text("TERM,SUBJ,CRS NUMBER\n,FOUN,110\n202630,FOUN,230\n")
         result = get_available_terms(csv)
         assert result == ["202630"]
+
+
+# ── Fixtures ───────────────────────────────────────────────────────────────────
+
+def _admits_xlsx(tmp_path: Path, students: list) -> Path:
+    """Create minimal PZSAAPF-style xlsx.
+    students = [(campus_code, registered_courses_string), ...]
+    Campus codes: 'M'=Savannah, 'O'=SCADnow.
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    # Rows 1–10: empty (metadata region in real file)
+    for _ in range(10):
+        ws.append([None])
+    # Row 11: headers — only cols 0 (A), 12 (M), 20 (U) matter
+    header_row = [None] * 39
+    header_row[0] = "Student ID"
+    header_row[12] = "Campus"
+    header_row[20] = "Currently Registered Courses (NO WL)"
+    ws.append(header_row)
+    # Data rows
+    for i, (campus_code, reg_courses) in enumerate(students):
+        row = [None] * 39
+        row[0] = f"student_{i}"
+        row[12] = campus_code
+        row[20] = reg_courses
+        ws.append(row)
+    p = tmp_path / "admits.xlsx"
+    wb.save(p)
+    return p
+
+
+# ── load_admits_foun_demand ────────────────────────────────────────────────────
+
+
+class TestLoadAdmitsFounDemand:
+    def test_counts_foun_courses_for_savannah(self, tmp_path):
+        p = _admits_xlsx(tmp_path, [
+            ("M", "FOUN 110; FOUN 111; ENGL 123"),
+            ("M", "FOUN 110; FSYR 101"),
+        ])
+        result = load_admits_foun_demand(p)
+        assert result["SAVANNAH"]["FOUN 110"] == 2
+        assert result["SAVANNAH"]["FOUN 111"] == 1
+
+    def test_counts_foun_courses_for_scadnow(self, tmp_path):
+        p = _admits_xlsx(tmp_path, [
+            ("O", "FOUN 111; CTXT 122"),
+        ])
+        result = load_admits_foun_demand(p)
+        assert result["SCADNOW"]["FOUN 111"] == 1
+
+    def test_non_foun_courses_excluded(self, tmp_path):
+        p = _admits_xlsx(tmp_path, [
+            ("M", "ENGL 123; FSYR 101"),
+        ])
+        result = load_admits_foun_demand(p)
+        assert result.get("SAVANNAH", {}) == {}
+
+    def test_unknown_campus_code_skipped(self, tmp_path):
+        p = _admits_xlsx(tmp_path, [
+            ("X", "FOUN 110"),
+        ])
+        result = load_admits_foun_demand(p)
+        assert result.get("SAVANNAH", {}) == {}
+        assert result.get("SCADNOW", {}) == {}
+
+    def test_missing_file_returns_empty_dict(self, tmp_path):
+        result = load_admits_foun_demand(tmp_path / "nonexistent.xlsx")
+        assert result == {}
+
+    def test_student_with_no_registered_courses_skipped(self, tmp_path):
+        p = _admits_xlsx(tmp_path, [
+            ("M", None),
+            ("M", "FOUN 112"),
+        ])
+        result = load_admits_foun_demand(p)
+        assert result["SAVANNAH"]["FOUN 112"] == 1

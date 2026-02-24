@@ -379,6 +379,47 @@ def load_crosswalk(crosswalk_path: Path) -> Dict[str, str]:
     return mapping
 
 
+def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
+    """Extract FOUN course demand from accepted applicants xlsx (PZSAAPF-SL31).
+
+    Reads column U (Currently Registered Courses) for each student.
+    Campus M → SAVANNAH, O → SCADNOW. Returns {campus: {foun_course: count}}.
+    Returns empty dict if file is missing or unreadable.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+    except Exception:
+        return {}
+
+    CAMPUS_MAP = {"M": "SAVANNAH", "O": "SCADNOW"}
+    result: Dict[str, DefaultDict] = {
+        "SAVANNAH": defaultdict(int),
+        "SCADNOW": defaultdict(int),
+    }
+
+    for row in rows:
+        if not row or row[0] is None:
+            continue
+        if str(row[0]).strip() == "Student ID":
+            continue  # skip header row
+        campus_code = str(row[12]).strip() if len(row) > 12 and row[12] else ""
+        campus = CAMPUS_MAP.get(campus_code)
+        if not campus:
+            continue
+        reg_courses = row[20] if len(row) > 20 else None
+        if not reg_courses:
+            continue
+        for code in FOUN_CODE_RE.findall(str(reg_courses)):
+            result[campus][f"FOUN {code}"] += 1
+
+    return {k: dict(v) for k, v in result.items()}
+
+
 def load_term_enrollments(
     path: Path,
     term_code: Optional[str] = None,
