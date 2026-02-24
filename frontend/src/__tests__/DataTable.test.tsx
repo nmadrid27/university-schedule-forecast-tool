@@ -85,4 +85,38 @@ describe('DataTable', () => {
 
     expect(screen.getByRole('img', { name: /adjusted/i })).toBeInTheDocument();
   });
+
+  it('renders negative changePercent without + prefix', () => {
+    render(<DataTable data={[{ course: 'FOUN 110', campus: 'Savannah', projectedSeats: 100, sections: 5, changePercent: -8.3 }]} />);
+
+    expect(screen.getByText('-8.3%')).toBeInTheDocument();
+  });
+
+  it('renders zero changePercent without + prefix', () => {
+    render(<DataTable data={[{ course: 'FOUN 110', campus: 'Savannah', projectedSeats: 100, sections: 5, changePercent: 0 }]} />);
+
+    expect(screen.getByText('0%')).toBeInTheDocument();
+  });
+
+  it('rounds decimal projectedSeats to nearest integer', () => {
+    render(<DataTable data={[{ course: 'FOUN 110', campus: 'Savannah', projectedSeats: 99.7, sections: 5 }]} />);
+
+    expect(screen.getByText('100')).toBeInTheDocument();
+  });
+
+  it('clicking Change header sorts rows ascending by changePercent', async () => {
+    const user = userEvent.setup();
+    const data: ForecastResult[] = [
+      { course: 'FOUN 110', campus: 'Savannah', projectedSeats: 100, sections: 5, changePercent: 15 },
+      { course: 'FOUN 120', campus: 'Savannah', projectedSeats: 80,  sections: 4, changePercent: -5 },
+      { course: 'FOUN 230', campus: 'Savannah', projectedSeats: 60,  sections: 3, changePercent: 5  },
+    ];
+    render(<DataTable data={data} />);
+
+    await user.click(screen.getByRole('button', { name: /change/i }));
+
+    const cells = screen.getAllByRole('cell').filter((c) => c.textContent?.startsWith('FOUN'));
+    expect(cells[0]).toHaveTextContent('FOUN 120'); // -5% is smallest
+    expect(cells[2]).toHaveTextContent('FOUN 110'); // 15% is largest
+  });
 });

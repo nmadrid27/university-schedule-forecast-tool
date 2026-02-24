@@ -149,3 +149,24 @@ def test_chat_llm_unknown_intent_with_adjustments_promoted_to_adjust(monkeypatch
 
     body = client.post("/api/chat", json={"message": "add 5 seats"}).json()
     assert body["parsedCommand"]["intent"] == "adjust"
+
+
+def test_chat_llm_error_falls_back_to_regex(monkeypatch):
+    """When LLM returns intent='unknown' AND an error key, endpoint discards
+    the LLM result and falls back to the regex parser (llm_used=False)."""
+    mock = MagicMock()
+    mock.is_configured.return_value = True
+    mock.parse_message = AsyncMock(return_value={
+        "intent": "unknown",
+        "parameters": {},
+        "confidence": 0.0,
+        "response_text": "",
+        "adjustments": [],
+        "error": "connection refused",
+    })
+    monkeypatch.setattr(main, "create_llm_service", lambda cfg: mock)
+
+    body = client.post("/api/chat", json={"message": "forecast spring 2026"}).json()
+    # Regex parser should pick up "forecast" intent from the message
+    assert body["llm_used"] is False
+    assert body["parsedCommand"]["intent"] == "forecast"
