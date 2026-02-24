@@ -630,6 +630,9 @@ def run_sequence_forecast(
     if enrollment_by_major_path:
         enrollment_weights = load_enrollment_by_major(enrollment_by_major_path)
 
+    # Load admits demand once (avoids re-reading file per campus)
+    admits_demand = load_admits_foun_demand(admits_path) if admits_path else {}
+
     mappings = load_sequence_mappings(
         sequence_map_path,
         target_quarter=target_quarter,
@@ -682,10 +685,8 @@ def run_sequence_forecast(
             combined[course] += seats
 
         # Add new-admit FOUN demand (intro courses entered directly from admits file)
-        if admits_path:
-            admits_demand = load_admits_foun_demand(admits_path)
-            for course, count in admits_demand.get(campus, {}).items():
-                combined[course] += count
+        for course, count in admits_demand.get(campus, {}).items():
+            combined[course] += count
 
         for course in mappings[campus]["target_counts"].keys():
             combined.setdefault(course, 0.0)
