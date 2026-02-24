@@ -10,3 +10,6 @@ node_modules/
 Data/adjustments/
 deprecated/
 forecast-tool.zip
+
+.obsidian/
+Data/.archives/
