@@ -122,9 +122,15 @@ class TestLoadTermEnrollmentsMasterSchedule:
         result = load_term_enrollments(csv)  # no term_code
         assert result[("SAVANNAH", "FOUN 110")] == 150.0
 
-    def test_atl_campus_rows_excluded(self, tmp_path):
+    def test_atl_campus_maps_to_atlanta(self, tmp_path):
         csv = tmp_path / "master.csv"
         self._master(csv, [{"subj": "FOUN", "crs": "110", "enr": 80, "campus": "ATL", "term": "202630"}])
+        result = load_term_enrollments(csv, term_code="202630")
+        assert result[("ATLANTA", "FOUN 110")] == 80.0
+
+    def test_unknown_campus_still_excluded(self, tmp_path):
+        csv = tmp_path / "master.csv"
+        self._master(csv, [{"subj": "FOUN", "crs": "110", "enr": 80, "campus": "HK", "term": "202630"}])
         result = load_term_enrollments(csv, term_code="202630")
         assert len(result) == 0
 

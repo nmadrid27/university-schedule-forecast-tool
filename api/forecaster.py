@@ -254,6 +254,13 @@ def load_sequence_mappings(
             "closer_source_totals": defaultdict(float),
             "target_counts": defaultdict(float),
         },
+        "ATLANTA": {
+            "farther_to_target": defaultdict(float),
+            "farther_source_totals": defaultdict(float),
+            "closer_to_target": defaultdict(float),
+            "closer_source_totals": defaultdict(float),
+            "target_counts": defaultdict(float),
+        },
     }
 
     # --- Pass 1: Count how often each course appears as a concurrent source ---
@@ -290,7 +297,7 @@ def load_sequence_mappings(
             farther_courses = _select_anchor_courses(farther_raw, farther_freq)
             closer_courses = _select_anchor_courses(closer_raw, closer_freq)
 
-            for campus in ("SAVANNAH", "SCADNOW"):
+            for campus in ("SAVANNAH", "SCADNOW", "ATLANTA"):
                 if not campus_matches(campuses, campus):
                     continue
 
@@ -418,13 +425,14 @@ def load_term_enrollments(
                     continue
                 enrollment = parse_number(row.get("ACT ENR"))
                 campus_code = (row.get("CAMPUS") or "").strip().upper()
-                # Only model Savannah (SAV) and SCADnow (NOW); skip Atlanta (ATL) and other campuses.
                 if campus_code == "NOW":
                     campus = "SCADNOW"
                 elif campus_code == "SAV":
                     campus = "SAVANNAH"
+                elif campus_code == "ATL":
+                    campus = "ATLANTA"
                 else:
-                    continue  # ATL and any other campus codes are intentionally excluded
+                    continue  # other campus codes excluded
                 totals[(campus, course)] += enrollment
     return totals
 
@@ -545,7 +553,7 @@ def run_sequence_forecast(
     closer_multiplier = progression_rate ** closer["multiplier_exp"]
 
     output_rows: List[Dict] = []
-    for campus in ("SAVANNAH", "SCADNOW"):
+    for campus in ("SAVANNAH", "SCADNOW", "ATLANTA"):
         farther_by_course = {
             course: seats
             for (campus_key, course), seats in farther_enrollments.items()
@@ -587,7 +595,7 @@ def run_sequence_forecast(
             output_rows.append(
                 {
                     "course": course,
-                    "campus": "Savannah" if campus == "SAVANNAH" else "SCADnow",
+                    "campus": {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}.get(campus, campus),
                     "projected_seats": seats,
                     "sections": compute_sections(seats, capacity),
                     "method": "sequence_map_feeder_mapping",
