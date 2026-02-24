@@ -265,3 +265,41 @@ class TestRunRatioForecast:
         )
         row = next(r for r in result if r["course"] == "FOUN 110")
         assert row["projected_seats"] == pytest.approx(10.0)  # 200 * 0.05
+
+
+class TestRunSequenceForecastAdmits:
+    def test_admits_path_none_does_not_crash(self):
+        """run_sequence_forecast with admits_path=None works as before."""
+        from pathlib import Path
+        seq = Path("Data/FOUN_sequencing_map_by_major.csv")
+        enr = Path("Data/Master Schedule of Classes.csv")
+        if not seq.exists() or not enr.exists():
+            pytest.skip("Real data files not present")
+        rows = run_sequence_forecast(
+            sequence_map_path=seq,
+            enrollment_source_path=enr,
+            target_term="Spring 2026",
+            admits_path=None,
+        )
+        assert isinstance(rows, list)
+
+    def test_admits_path_missing_file_falls_back_gracefully(self, tmp_path):
+        """Missing admits file → no crash, just no new-admit demand added."""
+        from pathlib import Path
+        seq = Path("Data/FOUN_sequencing_map_by_major.csv")
+        enr = Path("Data/Master Schedule of Classes.csv")
+        if not seq.exists() or not enr.exists():
+            pytest.skip("Real data files not present")
+        rows_without = run_sequence_forecast(
+            sequence_map_path=seq,
+            enrollment_source_path=enr,
+            target_term="Spring 2026",
+        )
+        rows_missing = run_sequence_forecast(
+            sequence_map_path=seq,
+            enrollment_source_path=enr,
+            target_term="Spring 2026",
+            admits_path=tmp_path / "nonexistent.xlsx",
+        )
+        # Nonexistent file should produce same result as no file
+        assert rows_without == rows_missing

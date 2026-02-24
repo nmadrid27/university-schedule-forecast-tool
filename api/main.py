@@ -222,6 +222,8 @@ class ConfigModel(BaseModel):
     bufferPercent: float = Field(default=10.0, ge=0.0, le=100.0)
     quartersToForecast: int = Field(default=2, ge=1, le=8)
     defaultTerm: str = "Spring 2026"
+    admitsFile: Optional[str] = None
+    enrollmentByMajorFile: Optional[str] = None
 
 class AdjustmentRequest(BaseModel):
     type: str  # "config" or "output"
@@ -378,6 +380,17 @@ def run_forecast(request: ForecastRequest):
         sequence_map_path = resolve("sequence_map", "Data/FOUN_sequencing_map_by_major.csv")
         enrollment_source_path = resolve("enrollment_source", "Data/Master Schedule of Classes.csv")
 
+        # Optional data enrichment files (None = not configured)
+        def resolve_optional(key: str) -> Optional[Path]:
+            raw = disk_cfg.get(key)
+            if not raw:
+                return None
+            p = Path(raw)
+            return p if p.is_absolute() else PROJECT_ROOT / p
+
+        admits_path = resolve_optional("admitsFile")
+        enrollment_by_major_path = resolve_optional("enrollmentByMajorFile")
+
         # Run the real forecast
         rows = run_sequence_forecast(
             sequence_map_path=sequence_map_path,
@@ -386,6 +399,8 @@ def run_forecast(request: ForecastRequest):
             capacity=capacity,
             progression_rate=progression_rate,
             buffer_percent=buffer_percent,
+            admits_path=admits_path,
+            enrollment_by_major_path=enrollment_by_major_path,
         )
 
         # Fallback: if sequence-based returned no results (e.g. Summer has

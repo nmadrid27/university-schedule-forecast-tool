@@ -602,6 +602,8 @@ def run_sequence_forecast(
     capacity: int = 20,
     progression_rate: float = 0.95,
     buffer_percent: float = 0.0,
+    admits_path: Optional[Path] = None,
+    enrollment_by_major_path: Optional[Path] = None,
 ) -> List[Dict]:
     """Run the full sequence-based forecast pipeline for any target quarter.
 
@@ -622,12 +624,19 @@ def run_sequence_forecast(
     farther = info["farther_feeder"]
 
     year_filter = _active_curriculum_years(info["target_term_code"])
+
+    # Load optional enrollment-by-major weights for sequence map
+    enrollment_weights = None
+    if enrollment_by_major_path:
+        enrollment_weights = load_enrollment_by_major(enrollment_by_major_path)
+
     mappings = load_sequence_mappings(
         sequence_map_path,
         target_quarter=target_quarter,
         closer_quarter=closer["quarter"],
         farther_quarter=farther["quarter"],
         year_filter=year_filter,
+        enrollment_weights=enrollment_weights,
     )
 
     # Load crosswalk so legacy course codes (DRAW, DSGN) map to FOUN
@@ -671,6 +680,12 @@ def run_sequence_forecast(
             combined[course] += seats
         for course, seats in from_closer.items():
             combined[course] += seats
+
+        # Add new-admit FOUN demand (intro courses entered directly from admits file)
+        if admits_path:
+            admits_demand = load_admits_foun_demand(admits_path)
+            for course, count in admits_demand.get(campus, {}).items():
+                combined[course] += count
 
         for course in mappings[campus]["target_counts"].keys():
             combined.setdefault(course, 0.0)
