@@ -109,11 +109,15 @@ def load_sequence_mappings(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]
             "fall_to_spring": defaultdict(float),
             "winter_to_spring": defaultdict(float),
             "spring_counts": defaultdict(float),
+            "fall_source_totals": defaultdict(float),
+            "winter_source_totals": defaultdict(float),
         },
         "SCADNOW": {
             "fall_to_spring": defaultdict(float),
             "winter_to_spring": defaultdict(float),
             "spring_counts": defaultdict(float),
+            "fall_source_totals": defaultdict(float),
+            "winter_source_totals": defaultdict(float),
         },
     }
 
@@ -142,8 +146,6 @@ def load_sequence_mappings(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]
             fall_raw = parse_quarter_courses(row.get("fall"))
             winter_raw = parse_quarter_courses(row.get("winter"))
             spring_courses = parse_quarter_courses(row.get("spring"))
-            if not spring_courses:
-                continue
 
             fall_courses = _select_anchor_courses(fall_raw, fall_freq)
             winter_courses = _select_anchor_courses(winter_raw, winter_freq)
@@ -151,6 +153,24 @@ def load_sequence_mappings(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]
             for campus in ("SAVANNAH", "SCADNOW"):
                 if not campus_matches(campuses, campus):
                     continue
+
+                # Source totals accumulate for ALL rows, including those with no Spring
+                # target.  Programs that take a feeder course but don't route to any
+                # Spring FOUN course must still dilute the fraction so that the few
+                # programs which do have Spring targets don't claim 100% of that feeder.
+                if spring_courses:
+                    for wc, ww in winter_raw:
+                        for _, sw in spring_courses:
+                            mappings[campus]["winter_source_totals"][wc] += ww * sw
+                    for fc, fw in fall_courses:
+                        for _, sw in spring_courses:
+                            mappings[campus]["fall_source_totals"][fc] += fw * sw
+                else:
+                    for wc, ww in winter_raw:
+                        mappings[campus]["winter_source_totals"][wc] += ww
+                    for fc, fw in fall_courses:
+                        mappings[campus]["fall_source_totals"][fc] += fw
+                    continue  # nothing else to build for this campus row
 
                 for spring_course, spring_weight in spring_courses:
                     mappings[campus]["spring_counts"][spring_course] += spring_weight
@@ -249,6 +269,7 @@ def distribute_enrollments(
     enrollments: Dict[str, float],
     mapping: Dict[Tuple[str, str], float],
     multiplier: float,
+    source_totals: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
     spring_demand: Dict[str, float] = defaultdict(float)
     # Normalize mapping weights per source course
@@ -262,7 +283,12 @@ def distribute_enrollments(
         targets = by_source.get(source_course)
         if not targets:
             continue
-        total_weight = sum(targets.values())
+        # Use pre-computed source totals (which include empty-Spring rows) so that
+        # programs without Spring continuations dilute the fraction correctly.
+        if source_totals is not None:
+            total_weight = source_totals.get(source_course, 0.0)
+        else:
+            total_weight = sum(targets.values())
         if total_weight <= 0:
             continue
         for target_course, weight in targets.items():
@@ -318,10 +344,12 @@ def main() -> int:
         winter_multiplier = args.progression_rate ** 1
 
         spring_from_fall = distribute_enrollments(
-            fall_by_course, mappings[campus]["fall_to_spring"], fall_multiplier
+            fall_by_course, mappings[campus]["fall_to_spring"], fall_multiplier,
+            source_totals=mappings[campus]["fall_source_totals"],
         )
         spring_from_winter = distribute_enrollments(
-            winter_by_course, mappings[campus]["winter_to_spring"], winter_multiplier
+            winter_by_course, mappings[campus]["winter_to_spring"], winter_multiplier,
+            source_totals=mappings[campus]["winter_source_totals"],
         )
 
         combined = defaultdict(float)
