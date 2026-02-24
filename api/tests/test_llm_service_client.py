@@ -230,6 +230,57 @@ class TestParseMessage:
         assert "error" in result
 
     @pytest.mark.asyncio
+    async def test_ollama_base_url_passed_to_openai_client(self):
+        """Ollama uses _call_openai_compatible; base_url must reach AsyncOpenAI kwargs."""
+        service = LLMService(provider="ollama", base_url="http://localhost:11434/v1")
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = _VALID_JSON
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+        captured_kwargs: dict = {}
+
+        def capture_init(**kw):
+            captured_kwargs.update(kw)
+            mock_client = AsyncMock()
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+            return mock_client
+
+        with patch("openai.AsyncOpenAI", side_effect=capture_init):
+            await service.parse_message("forecast", [], {}, [])
+
+        assert captured_kwargs.get("base_url") == "http://localhost:11434/v1"
+
+    @pytest.mark.asyncio
+    async def test_history_capped_at_20_for_openai_compatible(self):
+        """_call_openai_compatible slices history to [-20:] before sending."""
+        service = LLMService(provider="openai", api_key="sk-test")
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = _VALID_JSON
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+        captured_messages: list = []
+
+        async def capture(**kw):
+            captured_messages.extend(kw.get("messages", []))
+            return mock_resp
+
+        with patch("openai.AsyncOpenAI") as MockClass:
+            mock_client = AsyncMock()
+            mock_client.chat.completions.create = capture
+            MockClass.return_value = mock_client
+
+            long_history = [
+                {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"}
+                for i in range(25)
+            ]
+            await service.parse_message("current message", long_history, {}, [])
+
+        # system (1) + history capped at 20 + current (1) = 22 messages max
+        assert len(captured_messages) <= 22
+
+    @pytest.mark.asyncio
     async def test_history_is_included_in_anthropic_messages(self):
         service = LLMService(provider="anthropic", api_key="sk-ant-test")
 
