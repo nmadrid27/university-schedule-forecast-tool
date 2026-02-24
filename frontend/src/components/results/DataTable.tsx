@@ -53,7 +53,7 @@ export function DataTable({ data }: DataTableProps) {
     return (
         <div className="rounded-lg border border-border overflow-hidden">
             <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10 bg-card">
                     <TableRow className="bg-muted/50">
                         <TableHead>
                             <button type="button" onClick={() => handleSort('course')} className="font-semibold cursor-pointer inline-flex items-center hover:text-foreground transition-colors">

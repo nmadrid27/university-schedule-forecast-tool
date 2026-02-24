@@ -3,7 +3,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { MetricsCards } from './MetricsCards';
 import { DataTable } from './DataTable';
 import { AdjustmentBadges } from './AdjustmentBadges';
@@ -80,9 +79,8 @@ export function ResultsPanel({
                 </div>
             </div>
 
-            {/* Content */}
-            <ScrollArea className="flex-1 p-4">
-                {/* Adjustment Badges */}
+            {/* Fixed-height top content — always visible */}
+            <div className="shrink-0 px-4 pt-4">
                 {adjustments.length > 0 && onToggleAdjustment && onRemoveAdjustment && (
                     <AdjustmentBadges
                         adjustments={adjustments}
@@ -90,30 +88,27 @@ export function ResultsPanel({
                         onRemove={onRemoveAdjustment}
                     />
                 )}
-
-                {/* Metrics */}
                 <MetricsCards summary={summary} />
+                <Separator className="mt-4" />
+            </div>
 
-                <Separator className="my-4" />
-
-                {/* Data Table */}
-                <Card>
-                    <CardHeader className="pb-3">
+            {/* Table — fills remaining space and scrolls independently */}
+            <div className="flex-1 overflow-hidden flex flex-col px-4 pb-4 pt-4 min-h-0">
+                <Card className="flex-1 flex flex-col overflow-hidden">
+                    <CardHeader className="pb-3 shrink-0">
                         <CardTitle className="text-base">
                             Course Projections ({results.length} courses)
                         </CardTitle>
                     </CardHeader>
-                    <CardContent className="pt-0">
+                    <CardContent className="pt-0 flex-1 overflow-y-auto">
                         <DataTable data={results} />
                     </CardContent>
                 </Card>
-
-                {/* Source info */}
-                <p className="text-xs text-muted-foreground mt-4 text-center">
+                <p className="text-xs text-muted-foreground mt-3 text-center">
                     Source: Enrollment Data • Model: {summary.method} •
                     Courses: {summary.coursesForecasted}
                 </p>
-            </ScrollArea>
+            </div>
         </div>
     );
 }
