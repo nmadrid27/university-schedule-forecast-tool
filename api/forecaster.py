@@ -257,8 +257,6 @@ def load_sequence_mappings(
             farther_raw = parse_quarter_courses(row.get(farther_quarter))
             closer_raw = parse_quarter_courses(row.get(closer_quarter))
             target_courses = parse_quarter_courses(row.get(target_quarter))
-            if not target_courses:
-                continue
 
             farther_courses = _select_anchor_courses(farther_raw, farther_freq)
             closer_courses = _select_anchor_courses(closer_raw, closer_freq)
@@ -267,21 +265,34 @@ def load_sequence_mappings(
                 if not campus_matches(campuses, campus):
                     continue
 
+                # Source totals accumulate for ALL rows, including those with no Spring
+                # target.  Programs that take a feeder course in Winter but don't route
+                # to any Spring FOUN course (e.g. Animation students whose CHOICE winter
+                # FOUN has an empty Spring, or Motion Media Design taking FOUN 251 in
+                # Winter with nothing in Spring) must still dilute the fraction so that
+                # the few programs which do have Spring targets don't claim 100% of that
+                # feeder's enrollment.  Without this, source_totals[FOUN 251] = 1.0
+                # (Photography only) and all 264 Winter FOUN 251 students project to
+                # FOUN 220, even though Fashion Marketing and Motion Media Design also
+                # fill those seats and go nowhere in Spring.
+                if target_courses:
+                    for closer_course, closer_weight in closer_raw:
+                        for target_course, target_weight in target_courses:
+                            mappings[campus]["closer_source_totals"][closer_course] += closer_weight * target_weight
+                    for farther_course, farther_weight in farther_courses:
+                        for target_course, target_weight in target_courses:
+                            mappings[campus]["farther_source_totals"][farther_course] += farther_weight * target_weight
+                else:
+                    # No Spring target: count feeder courses toward the denominator
+                    # using weight 1.0 as the implicit single-target equivalent.
+                    for closer_course, closer_weight in closer_raw:
+                        mappings[campus]["closer_source_totals"][closer_course] += closer_weight
+                    for farther_course, farther_weight in farther_courses:
+                        mappings[campus]["farther_source_totals"][farther_course] += farther_weight
+                    continue  # nothing else to build for this campus row
+
                 for target_course, target_weight in target_courses:
                     mappings[campus]["target_counts"][target_course] += target_weight
-
-                # Source totals use UNFILTERED courses so the normalization
-                # denominator reflects the true program weight.  Courses that
-                # mostly co-occur with the anchor will have a large total but
-                # few entries in the filtered mapping, yielding a small proportion.
-                # Independent feeders keep proportions close to self-normalizing.
-                for closer_course, closer_weight in closer_raw:
-                    for target_course, target_weight in target_courses:
-                        mappings[campus]["closer_source_totals"][closer_course] += closer_weight * target_weight
-
-                for farther_course, farther_weight in farther_courses:
-                    for target_course, target_weight in target_courses:
-                        mappings[campus]["farther_source_totals"][farther_course] += farther_weight * target_weight
 
                 # Only populate farther_to_target for rows that have no closer-quarter course.
                 # When a row has both a closer course and a farther course leading to the

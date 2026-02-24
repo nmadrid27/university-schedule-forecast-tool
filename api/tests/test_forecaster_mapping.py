@@ -98,6 +98,29 @@ class TestLoadSequenceMappings:
         m = load_sequence_mappings(p, "spring", "winter", "fall")
         assert m["SAVANNAH"]["farther_to_target"][("FOUN 110", "FOUN 230")] == pytest.approx(2.0)
 
+    def test_empty_spring_row_still_dilutes_closer_source_totals(self, tmp_path):
+        """A row with no Spring target must still inflate closer_source_totals so that
+        the program's Winter feeder dilutes the fraction for programs that DO have a
+        Spring target.  This prevents 100% routing when most feeder-course students
+        are from programs without Spring FOUN continuations.
+
+        Real-world example: Motion Media Design takes FOUN 251 in Winter but has no
+        Spring FOUN course.  Without dilution, Photography B.F.A. (FOUN 251 → FOUN 220)
+        claims 100% of all FOUN 251 Winter students, severely over-projecting FOUN 220.
+        """
+        p = _seq_csv(tmp_path, [
+            # Photography routes FOUN 251 Winter → FOUN 220 Spring
+            "PHOTO,BFA,GENERAL,Second Year,,FOUN 251,FOUN 220,",
+            # Motion Media takes FOUN 251 in Winter but no Spring FOUN target
+            "MMD,BFA,GENERAL,Second Year,,FOUN 251,,",
+        ])
+        m = load_sequence_mappings(p, "spring", "winter", "fall")
+        # FOUN 220 should still appear in closer_to_target (Photography route active)
+        assert m["SAVANNAH"]["closer_to_target"][("FOUN 251", "FOUN 220")] == pytest.approx(1.0)
+        # closer_source_totals[FOUN 251] must be 2.0 (Photo contributes 1.0 + MMD 1.0)
+        # so the fraction becomes 1/2 = 0.5 rather than 1/1 = 1.0
+        assert m["SAVANNAH"]["closer_source_totals"]["FOUN 251"] == pytest.approx(2.0)
+
     def test_anchor_selection_drops_less_frequent_concurrent_course(self, tmp_path):
         # Three rows: FOUN 110 appears in fall in all three; FOUN 120 in only one.
         # _select_anchor_courses picks FOUN 110 (most frequent) and drops FOUN 120.
