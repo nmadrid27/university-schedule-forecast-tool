@@ -183,4 +183,26 @@ def apply_output_adjustments(
         r["adjusted"] = was_adjusted
         output.append(r)
 
+    # Inject new rows for 'set' adjustments targeting courses absent from the forecast.
+    # This covers courses that the sequence model can't produce (e.g. FOUN 110 in Spring).
+    existing_keys = {(r["course"].upper(), r["campus"].lower()) for r in output}
+    for adj in adjustments:
+        if not adj.enabled or adj.type != "output" or adj.operation != "set":
+            continue
+        if not adj.scope.course or not adj.scope.campus:
+            continue  # need both dimensions to create a specific row
+        key = (adj.scope.course.upper(), adj.scope.campus.lower())
+        if key in existing_keys:
+            continue  # already handled in the loop above
+        seats = adj.value
+        sections = int(math.ceil(seats / capacity)) if capacity > 0 and seats > 0 else 0
+        output.append({
+            "course": adj.scope.course,
+            "campus": adj.scope.campus,
+            "projected_seats": seats,
+            "sections": sections,
+            "adjusted": True,
+            "method": "manual_adjustment",
+        })
+
     return output
