@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Clean up repo clutter and wire two new Cognos data sources into the forecast engine to fix the program-enrollment-inequality accuracy gap.
+**Goal:** Clean up repo clutter, add Atlanta (ATL) campus support to the forecast engine, and wire two new Cognos data sources in to fix the program-enrollment-inequality accuracy gap.
 
-**Architecture:** New admits (PZSAAPF-SL31 xlsx) add real FOUN demand for intro courses; enrollment-by-major (Cognos CSV) replaces equal program weights with actual enrollment proportions in `load_sequence_mappings`. Both are opt-in via `forecast_config.json` — missing files fall back to current behavior.
+**Architecture:** ATL campus is added as a first-class campus alongside SAVANNAH and SCADNOW throughout the pipeline. New admits (PZSAAPF-SL31 xlsx) add real FOUN demand for intro courses; enrollment-by-major (Cognos CSV) replaces equal program weights with actual enrollment proportions in `load_sequence_mappings`. Both are opt-in via `forecast_config.json` — missing files fall back to current behavior.
 
 **Tech Stack:** Python 3.14, pytest, openpyxl, FastAPI/Pydantic, Next.js frontend (unchanged)
 
@@ -88,7 +88,158 @@ git commit -m "chore: clean up repo — remove legacy scripts, fix gitignore, mo
 
 ---
 
-## Task 2: `load_admits_foun_demand()` (TDD)
+## Task 2: ATL Campus Support (TDD)
+
+**Files:**
+- Modify: `api/forecaster.py` — `load_term_enrollments`, `load_sequence_mappings`, `run_sequence_forecast`
+- Test: `api/tests/test_forecaster_loaders.py` — update `test_atl_campus_rows_excluded`, add ATL test
+- Test: `api/tests/test_forecaster_mapping.py` — add ATLANTA to mappings assertion
+
+**Background:** Atlanta students in the Master Schedule use campus code `ATL`. The Spring 2026
+admissions file has no Atlanta new admits (only M/O codes), so `load_admits_foun_demand` needs
+no change. The sequence map uses "GENERAL" rows that already apply to all campuses — Atlanta
+students follow the same curriculum. Adding ATLANTA as a third campus is the only structural change.
+
+**Step 1: Write the failing tests**
+
+In `api/tests/test_forecaster_loaders.py`, replace this existing test:
+
+```python
+# OLD — delete this:
+def test_atl_campus_rows_excluded(self, tmp_path):
+    csv = tmp_path / "master.csv"
+    self._master(csv, [{"subj": "FOUN", "crs": "110", "enr": 80, "campus": "ATL", "term": "202630"}])
+    result = load_term_enrollments(csv, term_code="202630")
+    assert len(result) == 0
+```
+
+Replace with:
+
+```python
+def test_atl_campus_maps_to_atlanta(self, tmp_path):
+    csv = tmp_path / "master.csv"
+    self._master(csv, [{"subj": "FOUN", "crs": "110", "enr": 80, "campus": "ATL", "term": "202630"}])
+    result = load_term_enrollments(csv, term_code="202630")
+    assert result[("ATLANTA", "FOUN 110")] == 80.0
+
+def test_unknown_campus_still_excluded(self, tmp_path):
+    csv = tmp_path / "master.csv"
+    self._master(csv, [{"subj": "FOUN", "crs": "110", "enr": 80, "campus": "HK", "term": "202630"}])
+    result = load_term_enrollments(csv, term_code="202630")
+    assert len(result) == 0
+```
+
+**Step 2: Run tests to verify they fail**
+
+```bash
+python -m pytest api/tests/test_forecaster_loaders.py::TestLoadTermEnrollmentsMasterSchedule -v
+```
+
+Expected: `test_atl_campus_maps_to_atlanta` FAIL (ATL is currently excluded → returns empty dict)
+
+**Step 3: Update `load_term_enrollments` in `api/forecaster.py`**
+
+Find the campus mapping block (around line 421):
+
+```python
+# OLD:
+                if campus_code == "NOW":
+                    campus = "SCADNOW"
+                elif campus_code == "SAV":
+                    campus = "SAVANNAH"
+                else:
+                    continue  # ATL and any other campus codes are intentionally excluded
+
+# NEW:
+                if campus_code == "NOW":
+                    campus = "SCADNOW"
+                elif campus_code == "SAV":
+                    campus = "SAVANNAH"
+                elif campus_code == "ATL":
+                    campus = "ATLANTA"
+                else:
+                    continue  # other campus codes excluded
+```
+
+**Step 4: Add ATLANTA to `load_sequence_mappings` in `api/forecaster.py`**
+
+Find the `mappings` dict initialization (around line 242) and add ATLANTA:
+
+```python
+    mappings = {
+        "SAVANNAH": {
+            "farther_to_target": defaultdict(float),
+            "farther_source_totals": defaultdict(float),
+            "closer_to_target": defaultdict(float),
+            "closer_source_totals": defaultdict(float),
+            "target_counts": defaultdict(float),
+        },
+        "SCADNOW": { ... },  # unchanged
+        "ATLANTA": {
+            "farther_to_target": defaultdict(float),
+            "farther_source_totals": defaultdict(float),
+            "closer_to_target": defaultdict(float),
+            "closer_source_totals": defaultdict(float),
+            "target_counts": defaultdict(float),
+        },
+    }
+```
+
+Also update the campus loop in Pass 2 (line 293):
+
+```python
+# OLD:
+            for campus in ("SAVANNAH", "SCADNOW"):
+# NEW:
+            for campus in ("SAVANNAH", "SCADNOW", "ATLANTA"):
+```
+
+**Step 5: Add ATLANTA to `run_sequence_forecast` in `api/forecaster.py`**
+
+Find the output campus loop (around line 548):
+
+```python
+# OLD:
+    for campus in ("SAVANNAH", "SCADNOW"):
+# NEW:
+    for campus in ("SAVANNAH", "SCADNOW", "ATLANTA"):
+```
+
+Find the campus label in the output dict (around line 590):
+
+```python
+# OLD:
+                    "campus": "Savannah" if campus == "SAVANNAH" else "SCADnow",
+# NEW:
+                    "campus": {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}.get(campus, campus),
+```
+
+**Step 6: Run tests to verify they pass**
+
+```bash
+python -m pytest api/tests/test_forecaster_loaders.py::TestLoadTermEnrollmentsMasterSchedule -v
+```
+
+Expected: all tests PASS including the new ATL test.
+
+**Step 7: Run full suite**
+
+```bash
+python -m pytest
+```
+
+Expected: all tests pass. Check any tests that assert on result length or campus labels.
+
+**Step 8: Commit**
+
+```bash
+git add api/forecaster.py api/tests/test_forecaster_loaders.py api/tests/test_forecaster_mapping.py
+git commit -m "feat: add Atlanta (ATL) campus support to forecast engine"
+```
+
+---
+
+## Task 3: `load_admits_foun_demand()` (TDD) — note: Atlanta not in admits file
 
 **Files:**
 - Modify: `api/forecaster.py` (add new function after `load_crosswalk`)
@@ -293,6 +444,11 @@ class TestLoadEnrollmentByMajor:
         result = load_enrollment_by_major(p)
         assert result["SCADNOW"]["FOUN 112"]["ARCHITECTURE"] == 50.0
 
+    def test_loads_atlanta_row(self, tmp_path):
+        p = self._csv(tmp_path, ["202610,FOUN 112,ATL,ARCHITECTURE,80"])
+        result = load_enrollment_by_major(p)
+        assert result["ATLANTA"]["FOUN 112"]["ARCHITECTURE"] == 80.0
+
     def test_aggregates_across_terms(self, tmp_path):
         p = self._csv(tmp_path, [
             "202610,FOUN 112,SAV,ARCHITECTURE,280",
@@ -307,7 +463,7 @@ class TestLoadEnrollmentByMajor:
         assert "SAVANNAH" not in result or "DRAW 200" not in result.get("SAVANNAH", {})
 
     def test_unknown_campus_skipped(self, tmp_path):
-        p = self._csv(tmp_path, ["202610,FOUN 112,ATL,ARCHITECTURE,50"])
+        p = self._csv(tmp_path, ["202610,FOUN 112,HK,ARCHITECTURE,50"])
         result = load_enrollment_by_major(p)
         assert result == {}
 
@@ -352,7 +508,7 @@ def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]
     """
     if not path.is_file():
         return {}
-    CAMPUS_MAP = {"SAV": "SAVANNAH", "NOW": "SCADNOW"}
+    CAMPUS_MAP = {"SAV": "SAVANNAH", "NOW": "SCADNOW", "ATL": "ATLANTA"}
     result: Dict[str, Dict[str, Dict[str, float]]] = {}
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -808,8 +964,8 @@ When pulling from Cognos, request a report with these exact specifications:
 Report type:  Course Enrollment Summary (or Section Enrollment Detail)
 Terms:        202610 (Fall 2025) AND 202620 (Winter 2026)
 Filter:       Subject = FOUN
-Campus:       SAV and NOW only (exclude ATL)
-Output cols:  term | course (e.g. "FOUN 112") | campus (SAV/NOW) | major | enrollment count
+Campus:       SAV, NOW, and ATL (all three campuses)
+Output cols:  term | course (e.g. "FOUN 112") | campus (SAV/NOW/ATL) | major | enrollment count
 Aggregation:  Sum enrollment by (term + course + campus + major)
 Format:       CSV, UTF-8
 ```
@@ -822,7 +978,7 @@ The `major` column must use full program names matching those in `FOUN_sequencin
 
 | File | Change |
 |---|---|
-| `api/forecaster.py` | +`load_admits_foun_demand`, +`load_enrollment_by_major`, +`enrollment_weights` param on `load_sequence_mappings`, +`admits_path`/`enrollment_by_major_path` params on `run_sequence_forecast` |
+| `api/forecaster.py` | +ATL campus support in `load_term_enrollments`, `load_sequence_mappings`, `run_sequence_forecast`; +`load_admits_foun_demand`; +`load_enrollment_by_major`; +`enrollment_weights` param on `load_sequence_mappings`; +`admits_path`/`enrollment_by_major_path` params on `run_sequence_forecast` |
 | `api/main.py` | +`admitsFile`/`enrollmentByMajorFile` on `ConfigModel`, +`resolve_optional()` + new params passed to `run_sequence_forecast` |
 | `api/tests/test_forecaster_loaders.py` | +`TestLoadAdmitsFounDemand`, +`TestLoadEnrollmentByMajor` |
 | `api/tests/test_forecaster_mapping.py` | +`TestEnrollmentWeights` |
