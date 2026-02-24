@@ -284,3 +284,57 @@ class TestActiveCurriculumYears:
         """Once all four years are covered, no filter needed → return None."""
         assert _active_curriculum_years("202910") is None
         assert _active_curriculum_years("203010") is None
+
+
+# ── Enrollment weights ────────────────────────────────────────────────────────
+
+class TestEnrollmentWeights:
+    def test_weights_scale_source_totals(self, tmp_path):
+        """Architecture (100 students) and Jewelry (5 students) both route
+        FOUN 112 Winter → FOUN 220 Spring. Weighted totals should reflect
+        actual enrollment, not row count."""
+        p = _seq_csv(tmp_path, [
+            "ARCHITECTURE,BFA,GENERAL,First Year,,FOUN 112,FOUN 220,",
+            "JEWELRY,BFA,GENERAL,First Year,,FOUN 112,FOUN 220,",
+        ])
+        weights = {"SAVANNAH": {"FOUN 112": {"ARCHITECTURE": 100.0, "JEWELRY": 5.0}}}
+        m = load_sequence_mappings(p, "spring", "winter", "fall",
+                                   enrollment_weights=weights)
+        assert m["SAVANNAH"]["closer_source_totals"]["FOUN 112"] == pytest.approx(105.0)
+        assert m["SAVANNAH"]["closer_to_target"][("FOUN 112", "FOUN 220")] == pytest.approx(105.0)
+
+    def test_weights_affect_fraction_not_missing_programs(self, tmp_path):
+        """A program with no enrollment data (missing from weights dict) defaults
+        to 0.0 — it contributes nothing when we have real data for others."""
+        p = _seq_csv(tmp_path, [
+            "ARCHITECTURE,BFA,GENERAL,First Year,,FOUN 112,FOUN 220,",
+            "UNKNOWNPROG,BFA,GENERAL,First Year,,FOUN 112,FOUN 220,",
+        ])
+        weights = {"SAVANNAH": {"FOUN 112": {"ARCHITECTURE": 100.0}}}
+        m = load_sequence_mappings(p, "spring", "winter", "fall",
+                                   enrollment_weights=weights)
+        # Only Architecture contributes
+        assert m["SAVANNAH"]["closer_source_totals"]["FOUN 112"] == pytest.approx(100.0)
+
+    def test_weights_none_preserves_current_behavior(self, tmp_path):
+        """enrollment_weights=None (default) must behave exactly as before."""
+        p = _seq_csv(tmp_path, [
+            "ARCHITECTURE,BFA,GENERAL,First Year,,FOUN 112,FOUN 220,",
+            "JEWELRY,BFA,GENERAL,First Year,,FOUN 112,FOUN 220,",
+        ])
+        m = load_sequence_mappings(p, "spring", "winter", "fall",
+                                   enrollment_weights=None)
+        # Each row contributes 1.0 — current behavior unchanged
+        assert m["SAVANNAH"]["closer_source_totals"]["FOUN 112"] == pytest.approx(2.0)
+
+    def test_weights_applied_to_farther_feeder(self, tmp_path):
+        """Enrollment weights also apply to farther-feeder routes."""
+        p = _seq_csv(tmp_path, [
+            "ARCHITECTURE,BFA,GENERAL,First Year,FOUN 110,,FOUN 220,",
+            "JEWELRY,BFA,GENERAL,First Year,FOUN 110,,FOUN 220,",
+        ])
+        weights = {"SAVANNAH": {"FOUN 110": {"ARCHITECTURE": 200.0, "JEWELRY": 8.0}}}
+        m = load_sequence_mappings(p, "spring", "winter", "fall",
+                                   enrollment_weights=weights)
+        assert m["SAVANNAH"]["farther_source_totals"]["FOUN 110"] == pytest.approx(208.0)
+        assert m["SAVANNAH"]["farther_to_target"][("FOUN 110", "FOUN 220")] == pytest.approx(208.0)

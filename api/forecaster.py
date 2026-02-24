@@ -222,6 +222,7 @@ def load_sequence_mappings(
     closer_quarter: str,
     farther_quarter: str,
     year_filter: Optional[List[str]] = None,
+    enrollment_weights: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None,
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     """Load the sequencing map CSV and build mappings for the given quarters.
 
@@ -301,6 +302,17 @@ def load_sequence_mappings(
                 if not campus_matches(campuses, campus):
                     continue
 
+                # Compute enrollment-based row weight (1.0 if no weights provided)
+                row_weight = 1.0
+                if enrollment_weights:
+                    program = row.get("program", "").strip().upper()
+                    campus_w = enrollment_weights.get(campus, {})
+                    # Use closer feeder course enrollment if available, else farther
+                    if closer_raw:
+                        row_weight = campus_w.get(closer_raw[0][0], {}).get(program, 0.0)
+                    elif farther_raw:
+                        row_weight = campus_w.get(farther_raw[0][0], {}).get(program, 0.0)
+
                 # Source totals accumulate for ALL rows, including those with no Spring
                 # target.  Programs that take a feeder course in Winter but don't route
                 # to any Spring FOUN course (e.g. Animation students whose CHOICE winter
@@ -314,21 +326,21 @@ def load_sequence_mappings(
                 if target_courses:
                     for closer_course, closer_weight in closer_raw:
                         for target_course, target_weight in target_courses:
-                            mappings[campus]["closer_source_totals"][closer_course] += closer_weight * target_weight
+                            mappings[campus]["closer_source_totals"][closer_course] += closer_weight * target_weight * row_weight
                     for farther_course, farther_weight in farther_courses:
                         for target_course, target_weight in target_courses:
-                            mappings[campus]["farther_source_totals"][farther_course] += farther_weight * target_weight
+                            mappings[campus]["farther_source_totals"][farther_course] += farther_weight * target_weight * row_weight
                 else:
                     # No Spring target: count feeder courses toward the denominator
                     # using weight 1.0 as the implicit single-target equivalent.
                     for closer_course, closer_weight in closer_raw:
-                        mappings[campus]["closer_source_totals"][closer_course] += closer_weight
+                        mappings[campus]["closer_source_totals"][closer_course] += closer_weight * row_weight
                     for farther_course, farther_weight in farther_courses:
-                        mappings[campus]["farther_source_totals"][farther_course] += farther_weight
+                        mappings[campus]["farther_source_totals"][farther_course] += farther_weight * row_weight
                     continue  # nothing else to build for this campus row
 
                 for target_course, target_weight in target_courses:
-                    mappings[campus]["target_counts"][target_course] += target_weight
+                    mappings[campus]["target_counts"][target_course] += target_weight * row_weight
 
                 # Only populate farther_to_target for rows that have no closer-quarter course.
                 # When a row has both a closer course and a farther course leading to the
@@ -338,12 +350,12 @@ def load_sequence_mappings(
                     for farther_course, farther_weight in farther_courses:
                         for target_course, target_weight in target_courses:
                             key = (farther_course, target_course)
-                            mappings[campus]["farther_to_target"][key] += farther_weight * target_weight
+                            mappings[campus]["farther_to_target"][key] += farther_weight * target_weight * row_weight
 
                 for closer_course, closer_weight in closer_courses:
                     for target_course, target_weight in target_courses:
                         key = (closer_course, target_course)
-                        mappings[campus]["closer_to_target"][key] += closer_weight * target_weight
+                        mappings[campus]["closer_to_target"][key] += closer_weight * target_weight * row_weight
 
     return mappings
 
