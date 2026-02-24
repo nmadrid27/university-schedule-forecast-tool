@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from forecaster import get_available_terms, load_admits_foun_demand, load_term_enrollments
+from forecaster import get_available_terms, load_admits_foun_demand, load_enrollment_by_major, load_term_enrollments
 
 
 # ── Fixture helpers ────────────────────────────────────────────────────────────
@@ -265,3 +265,59 @@ class TestLoadAdmitsFounDemand:
         ])
         result = load_admits_foun_demand(p)
         assert result["SAVANNAH"]["FOUN 112"] == 1
+
+
+# ── load_enrollment_by_major ──────────────────────────────────────────────────
+
+
+class TestLoadEnrollmentByMajor:
+    def _csv(self, tmp_path: Path, rows: list) -> Path:
+        p = tmp_path / "enrollment_by_major.csv"
+        _write(p, "term,course,campus,major,enrollment\n" + "\n".join(rows) + "\n")
+        return p
+
+    def test_loads_savannah_row(self, tmp_path):
+        p = self._csv(tmp_path, ["202610,FOUN 112,SAV,ARCHITECTURE,300"])
+        result = load_enrollment_by_major(p)
+        assert result["SAVANNAH"]["FOUN 112"]["ARCHITECTURE"] == 300.0
+
+    def test_loads_scadnow_row(self, tmp_path):
+        p = self._csv(tmp_path, ["202620,FOUN 112,NOW,ARCHITECTURE,50"])
+        result = load_enrollment_by_major(p)
+        assert result["SCADNOW"]["FOUN 112"]["ARCHITECTURE"] == 50.0
+
+    def test_loads_atlanta_row(self, tmp_path):
+        p = self._csv(tmp_path, ["202610,FOUN 112,ATL,ARCHITECTURE,80"])
+        result = load_enrollment_by_major(p)
+        assert result["ATLANTA"]["FOUN 112"]["ARCHITECTURE"] == 80.0
+
+    def test_aggregates_across_terms(self, tmp_path):
+        p = self._csv(tmp_path, [
+            "202610,FOUN 112,SAV,ARCHITECTURE,280",
+            "202620,FOUN 112,SAV,ARCHITECTURE,310",
+        ])
+        result = load_enrollment_by_major(p)
+        assert result["SAVANNAH"]["FOUN 112"]["ARCHITECTURE"] == pytest.approx(590.0)
+
+    def test_non_foun_courses_excluded(self, tmp_path):
+        p = self._csv(tmp_path, ["202610,DRAW 200,SAV,ILLUSTRATION,100"])
+        result = load_enrollment_by_major(p)
+        assert "SAVANNAH" not in result or "DRAW 200" not in result.get("SAVANNAH", {})
+
+    def test_unknown_campus_skipped(self, tmp_path):
+        p = self._csv(tmp_path, ["202610,FOUN 112,HK,ARCHITECTURE,50"])
+        result = load_enrollment_by_major(p)
+        assert result == {}
+
+    def test_missing_file_returns_empty_dict(self, tmp_path):
+        result = load_enrollment_by_major(tmp_path / "nonexistent.csv")
+        assert result == {}
+
+    def test_multiple_majors_for_same_course(self, tmp_path):
+        p = self._csv(tmp_path, [
+            "202610,FOUN 112,SAV,ARCHITECTURE,300",
+            "202610,FOUN 112,SAV,ACCESSORY DESIGN,15",
+        ])
+        result = load_enrollment_by_major(p)
+        assert result["SAVANNAH"]["FOUN 112"]["ARCHITECTURE"] == 300.0
+        assert result["SAVANNAH"]["FOUN 112"]["ACCESSORY DESIGN"] == 15.0

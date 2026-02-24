@@ -420,6 +420,41 @@ def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
     return {k: dict(v) for k, v in result.items()}
 
 
+def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Load Cognos enrollment-by-major CSV.
+
+    Expected columns: term, course, campus, major, enrollment
+    Campus values: SAV → SAVANNAH, NOW → SCADNOW, ATL → ATLANTA
+    Major values must match program names in FOUN_sequencing_map_by_major.csv
+    (e.g. "ARCHITECTURE", "ACCESSORY DESIGN")
+
+    Aggregates enrollment across all terms in the file.
+    Returns {campus: {foun_course: {major: total_enrollment}}}.
+    Returns empty dict if file is missing.
+    """
+    if not path.is_file():
+        return {}
+    CAMPUS_MAP = {"SAV": "SAVANNAH", "NOW": "SCADNOW", "ATL": "ATLANTA"}
+    result: Dict[str, Dict[str, Dict[str, float]]] = {}
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            campus = CAMPUS_MAP.get(row.get("campus", "").strip().upper())
+            if not campus:
+                continue
+            course = row.get("course", "").strip()
+            if not course.upper().startswith("FOUN"):
+                continue
+            major = row.get("major", "").strip().upper()
+            try:
+                enrollment = float(row.get("enrollment") or 0)
+            except ValueError:
+                continue
+            result.setdefault(campus, {}).setdefault(course, {})
+            result[campus][course][major] = result[campus][course].get(major, 0.0) + enrollment
+    return result
+
+
 def load_term_enrollments(
     path: Path,
     term_code: Optional[str] = None,
