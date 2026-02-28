@@ -280,6 +280,12 @@ class TestActiveCurriculumYears:
             "First Year", "Second Year", "Third Year"
         ]
 
+    def test_pre_curriculum_terms_return_none(self):
+        """Terms before the FOUN curriculum (Fall 2025) must return None so
+        the year filter is disabled, not an empty list that filters everything."""
+        assert _active_curriculum_years("202510") is None   # Fall 2024
+        assert _active_curriculum_years("202530") is None   # Spring 2025
+
     def test_fall_2028_and_beyond_returns_none(self):
         """Once all four years are covered, no filter needed → return None."""
         assert _active_curriculum_years("202910") is None

@@ -395,3 +395,10 @@ class TestLoadEnrollmentByMajorXlsx:
     def test_missing_file_returns_empty_dict(self, tmp_path):
         result = load_enrollment_by_major(tmp_path / "nonexistent.xlsx")
         assert result == {}
+
+    def test_corrupt_xlsx_returns_empty_dict(self, tmp_path):
+        """A corrupt xlsx file must return {} (not partial data)."""
+        p = tmp_path / "bad.xlsx"
+        p.write_bytes(b"this is not a valid xlsx file")
+        result = load_enrollment_by_major(p)
+        assert result == {}

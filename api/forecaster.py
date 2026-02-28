@@ -8,6 +8,7 @@ Generalized to forecast any target quarter (Spring, Summer, Fall, Winter).
 """
 
 import csv
+import logging
 import math
 import re
 from collections import defaultdict
@@ -99,7 +100,7 @@ def _active_curriculum_years(term_code: str) -> Optional[List[str]]:
     """
     yyyy = int(str(term_code)[:4])
     n = yyyy - _FOUN_CURRICULUM_START
-    if n >= len(_YEAR_LABELS):
+    if n <= 0 or n >= len(_YEAR_LABELS):
         return None
     return _YEAR_LABELS[:n]
 
@@ -567,8 +568,9 @@ def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]
                     row[header_idx.get("enrollment", 4)],
                     True,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.warning("Failed to parse enrollment xlsx %s: %s", path, exc)
+            result.clear()
     else:
         with path.open(newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
