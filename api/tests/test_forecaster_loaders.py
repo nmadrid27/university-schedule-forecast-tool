@@ -321,3 +321,77 @@ class TestLoadEnrollmentByMajor:
         result = load_enrollment_by_major(p)
         assert result["SAVANNAH"]["FOUN 112"]["ARCHITECTURE"] == 300.0
         assert result["SAVANNAH"]["FOUN 112"]["ACCESSORY DESIGN"] == 15.0
+
+
+# ── load_enrollment_by_major — xlsx + Cognos crosswalk ───────────────────────
+
+
+def _enrollment_xlsx(tmp_path: Path, data_rows: list, header_offset: int = 6) -> Path:
+    """Create a minimal Cognos-style enrollment xlsx.
+
+    data_rows = [(term, course, campus, major, enrollment), ...]
+    header_offset: number of blank rows before the header (matches real Cognos export).
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for _ in range(header_offset):
+        ws.append([None])
+    ws.append(["term", "Course", "campus", "Major", "Enrollment"])
+    for row in data_rows:
+        ws.append(list(row))
+    p = tmp_path / "enrollment.xlsx"
+    wb.save(p)
+    return p
+
+
+class TestLoadEnrollmentByMajorXlsx:
+    def test_translates_cognos_code_to_seq_map_name(self, tmp_path):
+        """ARCH (Cognos) → ARCHITECTURE (seq map) for Savannah."""
+        p = _enrollment_xlsx(tmp_path, [("202610", "FOUN112", "SAV", "ARCH", 300)])
+        result = load_enrollment_by_major(p)
+        assert result["SAVANNAH"]["FOUN 112"]["ARCHITECTURE"] == 300.0
+
+    def test_normalises_course_format_foun112_to_foun_112(self, tmp_path):
+        """FOUN112 (no space) should become FOUN 112 in the result."""
+        p = _enrollment_xlsx(tmp_path, [("202610", "FOUN112", "SAV", "GRDS", 100)])
+        result = load_enrollment_by_major(p)
+        assert "FOUN 112" in result["SAVANNAH"]
+
+    def test_splits_enrollment_evenly_for_one_to_many(self, tmp_path):
+        """ANIM maps to 3 animation tracks; 300 enrollment → 100 each."""
+        p = _enrollment_xlsx(tmp_path, [("202610", "FOUN112", "SAV", "ANIM", 300)])
+        result = load_enrollment_by_major(p)
+        sav = result["SAVANNAH"]["FOUN 112"]
+        assert sav["FALL ONLY WINTER ONLY SPRING ONLY ANIMATION 2D ANIMATION"] == pytest.approx(100.0)
+        assert sav["FALL ONLY WINTER ONLY SPRING ONLY ANIMATION 3D CHARACTER ANIMATION"] == pytest.approx(100.0)
+        assert sav[
+            "FALL ONLY WINTER ONLY SPRING ONLY ANIMATION STORYTELLING AND CONCEPT DEVELOPMENT"
+        ] == pytest.approx(100.0)
+
+    def test_unknown_cognos_code_silently_skipped(self, tmp_path):
+        """Unrecognised Cognos codes (e.g. THED) should not appear in the result."""
+        p = _enrollment_xlsx(tmp_path, [
+            ("202610", "FOUN112", "SAV", "THED", 50),
+            ("202610", "FOUN112", "SAV", "ARCH", 300),
+        ])
+        result = load_enrollment_by_major(p)
+        assert result["SAVANNAH"]["FOUN 112"]["ARCHITECTURE"] == 300.0
+        assert "THED" not in result["SAVANNAH"]["FOUN 112"]
+
+    def test_aggregates_same_program_across_terms(self, tmp_path):
+        """Enrollment from Fall and Winter for the same program should be summed."""
+        p = _enrollment_xlsx(tmp_path, [
+            ("202610", "FOUN112", "SAV", "ARCH", 200),
+            ("202620", "FOUN112", "SAV", "ARCH", 250),
+        ])
+        result = load_enrollment_by_major(p)
+        assert result["SAVANNAH"]["FOUN 112"]["ARCHITECTURE"] == pytest.approx(450.0)
+
+    def test_now_campus_maps_to_scadnow(self, tmp_path):
+        p = _enrollment_xlsx(tmp_path, [("202610", "FOUN112", "NOW", "ARCH", 40)])
+        result = load_enrollment_by_major(p)
+        assert result["SCADNOW"]["FOUN 112"]["ARCHITECTURE"] == 40.0
+
+    def test_missing_file_returns_empty_dict(self, tmp_path):
+        result = load_enrollment_by_major(tmp_path / "nonexistent.xlsx")
+        assert result == {}

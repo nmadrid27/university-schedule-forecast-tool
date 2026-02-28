@@ -32,6 +32,63 @@ QUARTER_CODES = {"fall": 10, "winter": 20, "spring": 30, "summer": 40}
 _FOUN_CURRICULUM_START = 2025
 _YEAR_LABELS = ["First Year", "Second Year", "Third Year", "Fourth Year"]
 
+# Crosswalk: Cognos major code → list of exact sequencing-map program names.
+# When a code maps to multiple programs (e.g. ANIM → 3 animation tracks),
+# enrollment is split evenly.  Codes absent from this dict are silently ignored.
+_COGNOS_TO_SEQ_PROGRAMS: Dict[str, List[str]] = {
+    "ACCE": ["ACCESSORY DESIGN"],
+    "ACT":  ["ACTING Group A"],
+    "ADBR": ["ADVERTISING AND BRANDING"],
+    "ANIM": [
+        "Fall Only Winter Only Spring Only ANIMATION 2D Animation",
+        "Fall Only Winter Only Spring Only ANIMATION 3D Character Animation",
+        "Fall Only Winter Only Spring Only ANIMATION Storytelling and Concept Development",
+    ],
+    "ARCH": ["ARCHITECTURE"],
+    "ARLH": ["ARCHITECTURAL HISTORY"],
+    "ARTH": ["ART HISTORY"],
+    "ARVR": ["Fall Only Winter Only Spring Only IMMERSIVE REALITY"],
+    "DWRI": ["DRAMATIC WRITING"],
+    "EQST": ["EQUESTRIAN STUDIES"],
+    "FASH": ["FASHION Group A"],
+    "FASM": ["FASHION MARKETING AND MANAGEMENT"],
+    "FIBR": ["Fall Only Winter Only Spring On ly FIBERS"],  # typo preserved from seq map
+    "FILM": [
+        "FILM AND TELEVISION Group A",
+        "FILM AND TELEVISION Group B",
+        "FILM AND TELEVISION Group C",
+    ],
+    "FURN": ["Fall Only Winter Only Spring Only FURNITURE DESIGN"],
+    "GAME": ["GAME DEVELOPMENT", "Fall Only Winter Only Spring Only GAME DEVELOPMENT"],
+    "GRDS": ["GRAPHIC DESIGN"],
+    "IDUS": ["INTERIOR DESIGN"],
+    "ILLU": [
+        "ILLUSTRATION",
+        "ILLUSTRATION Dynamic Illustration and Publication Design, Group A",
+        "ILLUSTRATION Illustration for Surface Design, Group B",
+        "ILLUSTRATION Visual Development, Group B",
+    ],
+    "INDS": ["INDUSTRIAL DESIGN"],
+    "JEWL": ["Fall Only Winter Only Spring Only JEWELRY"],
+    "MOME": ["MOTION MEDIA DESIGN"],
+    "PHOT": ["PHOTOGRAPHY"],
+    "PNTG": ["PAINTING"],
+    "PROD": [
+        "PRODUCTION DESIGN Costume Design, Group A",
+        "PRODUCTION DESIGN Lighting Design, Group A",
+        "PRODUCTION DESIGN Set Design and Art Direction Design, Group A",
+    ],
+    "SEQA": ["SEQUENTIAL ART", "SEQUENTIAL ART Group A"],
+    "SERV": ["SERVICE DESIGN"],
+    "SNDS": ["SOUND DESIGN"],
+    "SOCL": ["SOCIAL STRATEGY AND MANAGEMENT"],
+    "UXDG": ["USER EXPERIENCE DESIGN (UXD)"],
+    "UXR":  ["USER EXPERIENCE RESEARCH (UXR)"],
+    "VFX":  ["VISUAL EFFECTS AND TECHNICAL ANIMATION"],
+    "VSFX": ["VISUAL EFFECTS AND TECHNICAL ANIMATION"],
+    "WRIT": ["Fall Only Winter Only Spring Only WRITING"],
+}
+
 
 def _active_curriculum_years(term_code: str) -> Optional[List[str]]:
     """Return curriculum year labels active for the given SCAD term code.
@@ -433,37 +490,97 @@ def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
 
 
 def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]:
-    """Load Cognos enrollment-by-major CSV.
+    """Load Cognos enrollment-by-major report (xlsx or CSV).
 
-    Expected columns: term, course, campus, major, enrollment
-    Campus values: SAV → SAVANNAH, NOW → SCADNOW, ATL → ATLANTA
-    Major values must match program names in FOUN_sequencing_map_by_major.csv
-    (e.g. "ARCHITECTURE", "ACCESSORY DESIGN")
+    **xlsx (Cognos export):**
+      - Finds the header row by scanning for a cell containing 'term'
+      - Course format ``FOUN110`` is normalised to ``FOUN 110``
+      - Major column contains Cognos abbreviated codes (ARCH, ANIM, …);
+        these are translated to seq-map program names via ``_COGNOS_TO_SEQ_PROGRAMS``
+      - Codes absent from the crosswalk are silently ignored
+      - One-to-many codes (e.g. ANIM → 3 tracks) split enrollment evenly
 
-    Aggregates enrollment across all terms in the file.
-    Returns {campus: {foun_course: {major: total_enrollment}}}.
+    **CSV (legacy / test format):**
+      - Expected columns: term, course, campus, major, enrollment
+      - Major values must already be seq-map program names (uppercased on read)
+
+    Campus: SAV → SAVANNAH, NOW → SCADNOW, ATL → ATLANTA
+    Returns {campus: {foun_course: {program_upper: total_enrollment}}}.
     Returns empty dict if file is missing.
     """
     if not path.is_file():
         return {}
+
     CAMPUS_MAP = {"SAV": "SAVANNAH", "NOW": "SCADNOW", "ATL": "ATLANTA"}
     result: Dict[str, Dict[str, Dict[str, float]]] = {}
-    with path.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            campus = CAMPUS_MAP.get(row.get("campus", "").strip().upper())
-            if not campus:
-                continue
-            course = row.get("course", "").strip()
-            if not course.upper().startswith("FOUN"):
-                continue
-            major = row.get("major", "").strip().upper()
-            try:
-                enrollment = float(row.get("enrollment") or 0)
-            except ValueError:
-                continue
+
+    def _accumulate(campus_raw, course_raw, major_raw, enroll_raw, use_crosswalk: bool) -> None:
+        campus = CAMPUS_MAP.get(str(campus_raw).strip().upper())
+        if not campus:
+            return
+        m = re.match(r"^FOUN\s*(\d{3})$", str(course_raw).strip(), re.IGNORECASE)
+        if not m:
+            return
+        course = f"FOUN {m.group(1)}"
+        try:
+            enroll = float(enroll_raw) if enroll_raw is not None else 0.0
+        except (ValueError, TypeError):
+            return
+        if use_crosswalk:
+            programs = _COGNOS_TO_SEQ_PROGRAMS.get(str(major_raw).strip().upper())
+            if not programs:
+                return
+            per_prog = enroll / len(programs)
+            for prog in programs:
+                key = prog.upper()
+                result.setdefault(campus, {}).setdefault(course, {})
+                result[campus][course][key] = result[campus][course].get(key, 0.0) + per_prog
+        else:
+            key = str(major_raw).strip().upper()
+            if not key:
+                return
             result.setdefault(campus, {}).setdefault(course, {})
-            result[campus][course][major] = result[campus][course].get(major, 0.0) + enrollment
+            result[campus][course][key] = result[campus][course].get(key, 0.0) + enroll
+
+    if path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            sheet_name = "FA25 + WI26" if "FA25 + WI26" in wb.sheetnames else wb.sheetnames[0]
+            ws = wb[sheet_name]
+            header_idx: Dict[str, int] = {}
+            header_found = False
+            for row in ws.iter_rows(values_only=True):
+                if not header_found:
+                    if any(str(c).strip().lower() == "term" for c in row if c is not None):
+                        for i, h in enumerate(row):
+                            if h is not None:
+                                header_idx[str(h).strip().lower()] = i
+                        header_found = True
+                    continue
+                if not row or row[0] is None:
+                    break
+                _accumulate(
+                    row[header_idx.get("campus", 2)],
+                    row[header_idx.get("course", 1)],
+                    row[header_idx.get("major", 3)],
+                    row[header_idx.get("enrollment", 4)],
+                    True,
+                )
+        except Exception:
+            pass
+    else:
+        with path.open(newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                _accumulate(
+                    row.get("campus", ""),
+                    row.get("course", ""),
+                    row.get("major", ""),
+                    row.get("enrollment", 0),
+                    False,
+                )
+
     return result
 
 

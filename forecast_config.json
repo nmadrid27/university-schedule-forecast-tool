@@ -10,5 +10,6 @@
     "model": "claude-haiku-4-5-20251001",
     "base_url": null
   },
-  "admitsFile": "Data/PZSAAPF-SL31 - Accepted Applicants with Latest Decision.xlsx"
+  "admitsFile": "Data/PZSAAPF-SL31 - Accepted Applicants with Latest Decision.xlsx",
+  "enrollmentByMajorFile": "Data/enrollment_by_major.xlsx"
 }
