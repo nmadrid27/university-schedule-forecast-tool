@@ -133,7 +133,7 @@ describe('useChat — sendMessage', () => {
 
   it('adds error message and clears isLoading when API fails', async () => {
     mockApi.sendMessage.mockRejectedValue(new Error('Network error'));
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const { result } = renderHook(() => useChat());
     await act(async () => { await result.current.sendMessage('forecast'); });
     expect(result.current.isLoading).toBe(false);

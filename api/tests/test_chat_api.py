@@ -151,6 +151,113 @@ def test_chat_llm_unknown_intent_with_adjustments_promoted_to_adjust(monkeypatch
     assert body["parsedCommand"]["intent"] == "adjust"
 
 
+def test_chat_llm_skips_invalid_adjustments_instead_of_failing(monkeypatch):
+    monkeypatch.setattr(
+        main, "create_llm_service",
+        lambda cfg: _make_mock_llm(
+            intent="adjust",
+            response_text="Processed request.",
+            adjustments=[{"type": "output", "operation": "bogus", "value": 2, "scope": {}}],
+            confidence=0.6,
+        ),
+    )
+    saved = []
+    monkeypatch.setattr(main, "add_adjustment", lambda data_dir, term, adj: saved.append(adj))
+
+    r = client.post("/api/chat", json={"message": "add seats"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["llm_used"] is True
+    assert body.get("adjustments") in (None, [])
+    assert saved == []
+
+
+def test_chat_llm_null_scope_is_treated_as_empty_scope(monkeypatch):
+    monkeypatch.setattr(
+        main, "create_llm_service",
+        lambda cfg: _make_mock_llm(
+            intent="adjust",
+            response_text="Processed request.",
+            adjustments=[{"type": "output", "operation": "add", "value": 2, "scope": None}],
+            confidence=0.7,
+        ),
+    )
+    saved = []
+    monkeypatch.setattr(main, "add_adjustment", lambda data_dir, term, adj: saved.append(adj))
+
+    r = client.post("/api/chat", json={"message": "add seats"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["llm_used"] is True
+    assert len(saved) == 1
+    assert saved[0].scope.course is None
+    assert saved[0].scope.campus is None
+
+
+def test_chat_llm_non_dict_scope_is_treated_as_empty_scope(monkeypatch):
+    monkeypatch.setattr(
+        main, "create_llm_service",
+        lambda cfg: _make_mock_llm(
+            intent="adjust",
+            response_text="Processed request.",
+            adjustments=[{"type": "output", "operation": "add", "value": 2, "scope": "bad"}],
+            confidence=0.7,
+        ),
+    )
+    saved = []
+    monkeypatch.setattr(main, "add_adjustment", lambda data_dir, term, adj: saved.append(adj))
+
+    r = client.post("/api/chat", json={"message": "add seats"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["llm_used"] is True
+    assert len(saved) == 1
+    assert saved[0].scope.course is None
+    assert saved[0].scope.campus is None
+
+
+def test_chat_llm_non_numeric_value_is_skipped(monkeypatch):
+    monkeypatch.setattr(
+        main, "create_llm_service",
+        lambda cfg: _make_mock_llm(
+            intent="adjust",
+            response_text="Processed request.",
+            adjustments=[{"type": "output", "operation": "add", "value": "abc", "scope": {}}],
+            confidence=0.7,
+        ),
+    )
+    saved = []
+    monkeypatch.setattr(main, "add_adjustment", lambda data_dir, term, adj: saved.append(adj))
+
+    r = client.post("/api/chat", json={"message": "add seats"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["llm_used"] is True
+    assert body.get("adjustments") in (None, [])
+    assert saved == []
+
+
+def test_chat_llm_numeric_string_value_is_coerced(monkeypatch):
+    monkeypatch.setattr(
+        main, "create_llm_service",
+        lambda cfg: _make_mock_llm(
+            intent="adjust",
+            response_text="Processed request.",
+            adjustments=[{"type": "output", "operation": "add", "value": "2.5", "scope": {}}],
+            confidence=0.7,
+        ),
+    )
+    saved = []
+    monkeypatch.setattr(main, "add_adjustment", lambda data_dir, term, adj: saved.append(adj))
+
+    r = client.post("/api/chat", json={"message": "add seats"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["llm_used"] is True
+    assert len(saved) == 1
+    assert saved[0].value == pytest.approx(2.5)
+
+
 def test_chat_llm_error_falls_back_to_regex(monkeypatch):
     """When LLM returns intent='unknown' AND an error key, endpoint discards
     the LLM result and falls back to the regex parser (llm_used=False)."""

@@ -5,6 +5,7 @@ remain fast and deterministic (no actual Prophet/ETS/ARIMA fitting).
 """
 
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -145,6 +146,21 @@ class TestEnsembleEndpoint:
                    return_value=df):
             r = client.post("/api/forecast/ensemble", json={})
         assert r.status_code == 404
+
+    def test_buffer_percent_accepts_camel_case_config_key(self):
+        with ExitStack() as stack:
+            for p in self._patches():
+                stack.enter_context(p)
+            no_buffer = client.post(
+                "/api/forecast/ensemble",
+                json={"course": "FOUN 110", "config": {"capacity": 20, "bufferPercent": 0}},
+            ).json()
+            with_buffer = client.post(
+                "/api/forecast/ensemble",
+                json={"course": "FOUN 110", "config": {"capacity": 20, "bufferPercent": 50}},
+            ).json()
+
+        assert with_buffer["summary"]["totalStudents"] > no_buffer["summary"]["totalStudents"]
 
 
 # ── /api/diagnostics ─────────────────────────────────────────────────────────

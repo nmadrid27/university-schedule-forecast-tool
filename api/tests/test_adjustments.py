@@ -76,6 +76,26 @@ def test_post_multiple_adjustments_all_appear_on_get():
     assert len(r.json()["adjustments"]) == 2
 
 
+def test_post_invalid_type_returns_422():
+    r = client.post(f"/api/adjustments/{TERM_ENCODED}", json={
+        "type": "bogus",
+        "operation": "multiply",
+        "value": 1.1,
+        "reason": "invalid",
+    })
+    assert r.status_code == 422
+
+
+def test_post_invalid_operation_returns_422():
+    r = client.post(f"/api/adjustments/{TERM_ENCODED}", json={
+        "type": "output",
+        "operation": "bogus",
+        "value": 1.1,
+        "reason": "invalid",
+    })
+    assert r.status_code == 422
+
+
 # ─── PUT /api/adjustments/{term}/{id}/toggle ──────────────────────────────────
 
 def test_toggle_flips_adjustment_from_enabled_to_disabled():
@@ -222,6 +242,14 @@ def test_output_set_overrides_seats():
 def test_output_disabled_adjustment_not_applied():
     rows = [_row(seats=100)]
     adjs = [_out_adj(operation="multiply", value=2.0, enabled=False)]
+    result = apply_output_adjustments(adjs, rows, capacity=20)
+    assert result[0]["projected_seats"] == 100
+    assert result[0]["adjusted"] is False
+
+
+def test_output_unknown_operation_does_not_mark_adjusted():
+    rows = [_row(seats=100)]
+    adjs = [_out_adj(operation="bogus")]
     result = apply_output_adjustments(adjs, rows, capacity=20)
     assert result[0]["projected_seats"] == 100
     assert result[0]["adjusted"] is False

@@ -18,7 +18,6 @@ describe('ConfigSidebar', () => {
   });
 
   it('calls onConfigChange with new capacity when input changes', async () => {
-    const user = userEvent.setup();
     const onConfigChange = vi.fn();
     render(<ConfigSidebar config={baseConfig} onConfigChange={onConfigChange} />);
 

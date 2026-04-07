@@ -150,10 +150,6 @@ def resolve_term_info(target_term: str) -> Dict:
         # Walk backwards: the closer feeder is 1 quarter before target,
         # the farther feeder is 2 quarters before target.
         # We need to figure out the calendar year for each feeder.
-        quarter_order = ["fall", "winter", "spring", "summer"]
-        target_idx = quarter_order.index(quarter_name)
-        feeder_idx = quarter_order.index(feeder_quarter)
-
         # Determine the calendar year of the feeder
         # The feeder is in the same academic year cycle or the previous one
         if feeder_quarter == "fall":
@@ -586,6 +582,24 @@ def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]
     return result
 
 
+def _normalize_campus_label(raw_lower: str) -> str:
+    """Normalize free-text campus label (already .strip().lower()) to internal constant."""
+    if "scadnow" in raw_lower or "online" in raw_lower or raw_lower == "now":
+        return "SCADNOW"
+    if raw_lower in ("atl", "atlanta"):
+        return "ATLANTA"
+    return "SAVANNAH"
+
+
+def _normalize_campus_code(code_upper: str) -> Optional[str]:
+    """Normalize CAMPUS column codes from Master Schedule to internal constants.
+
+    Returns None for unrecognized codes so the caller can skip the row.
+    """
+    _MAP = {"NOW": "SCADNOW", "SAV": "SAVANNAH", "ATL": "ATLANTA"}
+    return _MAP.get(code_upper)
+
+
 def load_term_enrollments(
     path: Path,
     term_code: Optional[str] = None,
@@ -614,7 +628,12 @@ def load_term_enrollments(
                 enrollment = parse_number(row.get("Enrollment"))
                 room = (row.get("Room") or "").strip().upper()
                 section = (row.get("Section #") or "").strip().upper()
-                campus = "SCADNOW" if (room == "OLNOW" or section.startswith("N")) else "SAVANNAH"
+                # Also check the explicit Campus column when present (e.g. "SCADnow online")
+                campus_col = (row.get("Campus") or "").strip().lower()
+                if campus_col:
+                    campus = _normalize_campus_label(campus_col)
+                else:
+                    campus = "SCADNOW" if (room == "OLNOW" or section.startswith("N")) else "SAVANNAH"
                 totals[(campus, course)] += enrollment
                 continue
 
@@ -632,14 +651,9 @@ def load_term_enrollments(
                     continue
                 enrollment = parse_number(row.get("ACT ENR"))
                 campus_code = (row.get("CAMPUS") or "").strip().upper()
-                if campus_code == "NOW":
-                    campus = "SCADNOW"
-                elif campus_code == "SAV":
-                    campus = "SAVANNAH"
-                elif campus_code == "ATL":
-                    campus = "ATLANTA"
-                else:
-                    continue  # other campus codes excluded
+                campus = _normalize_campus_code(campus_code)
+                if campus is None:
+                    continue  # unrecognized campus
                 totals[(campus, course)] += enrollment
     return totals
 

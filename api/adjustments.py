@@ -165,13 +165,18 @@ def apply_output_adjustments(
                     continue
 
                 if adj.type == "output":
+                    op_applied = False
                     if adj.operation == "multiply":
                         seats *= adj.value
+                        op_applied = True
                     elif adj.operation == "add":
                         seats += adj.value
+                        op_applied = True
                     elif adj.operation == "set":
                         seats = adj.value
-                    was_adjusted = True
+                        op_applied = True
+                    if op_applied:
+                        was_adjusted = True
                 elif adj.type == "config" and adj.parameter == "capacity":
                     row_capacity = max(1, min(100, int(adj.value)))
                     was_adjusted = True

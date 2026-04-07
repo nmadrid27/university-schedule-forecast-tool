@@ -24,12 +24,7 @@ def quarter_to_date(year: Union[int, str], quarter: Union[str, int]) -> datetime
     }
     q = str(quarter).lower().strip()
     month = quarter_map.get(q, 1)
-    # Winter quarter belongs to the next calendar year conceptually
-    if q == 'winter':
-        year = int(year) + 1
-    else:
-        year = int(year)
-    return datetime(year, month, 1)
+    return datetime(int(year), month, 1)
 
 
 def date_to_quarter_label(date: datetime) -> str:

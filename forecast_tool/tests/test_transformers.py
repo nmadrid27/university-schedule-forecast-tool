@@ -2,9 +2,6 @@
 
 quarter_to_date: converts (year, quarter) → datetime
 date_to_quarter_label: converts datetime → "Quarter YYYY" label
-
-SCAD-specific: Winter belongs to the *next* calendar year conceptually,
-so quarter_to_date(2022, 'winter') returns datetime(2023, 1, 1).
 """
 
 from datetime import datetime
@@ -26,13 +23,9 @@ class TestQuarterToDate:
     def test_summer_returns_june(self):
         assert quarter_to_date(2022, "summer") == datetime(2022, 6, 1)
 
-    def test_winter_advances_year(self):
-        # Winter 2022 runs in January 2023 (SCAD academic year convention)
-        assert quarter_to_date(2022, "winter") == datetime(2023, 1, 1)
-
-    def test_winter_year_advance_is_exactly_one(self):
+    def test_winter_keeps_same_year(self):
         dt = quarter_to_date(2025, "winter")
-        assert dt.year == 2026
+        assert dt.year == 2025
 
     def test_string_year_accepted(self):
         assert quarter_to_date("2022", "fall") == datetime(2022, 9, 1)

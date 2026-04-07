@@ -107,7 +107,7 @@ Pure functions — no argparse, no sys.exit. Entry points:
 - `resolve_term_info()` — parses "Spring 2026" into term codes + feeder terms
 - `load_previous_forecast()` — reads existing CSVs for change delta comparison
 
-The `forecast_tool/` package contains reusable time-series models (Prophet, ETS, ARIMA), data loaders, and diagnostics. `forecast_tool/data/loaders.py` accepts an optional `data_dir` absolute path — callers in `api/main.py` pass `DATA_DIR` explicitly so no `os.chdir()` is needed.
+The `forecast_tool/` package contains reusable time-series models (OLS, ETS, ARIMA), data loaders, and diagnostics. `forecast_tool/data/loaders.py` accepts an optional `data_dir` absolute path — callers in `api/main.py` pass `DATA_DIR` explicitly so no `os.chdir()` is needed.
 
 ## Domain Logic (SCAD-Specific)
 
@@ -139,11 +139,19 @@ Used when sequencing map has no data for a target quarter (Summer):
 ### Campus Detection
 
 - **Sequencing map**: `campus` column; `"GENERAL"` applies to all campuses
-- **Enrollment data**: SCADnow = room `OLNOW` or section starts with `N`; Master Schedule uses `CAMPUS` column (`SAV`/`NOW`)
+- **Enrollment data**: Campus resolved via `_normalize_campus_label()` (free-text: "SCADnow online", "scadnow", "online", "now" → SCADNOW) or `_normalize_campus_code()` (Master Schedule CAMPUS column: SAV/NOW/ATL). Both helpers defined in `api/forecaster.py`. Room `OLNOW` and section prefix `N` remain as fallback when no Campus column is present.
 
 ### 3-Model Ensemble (Alternative)
 
-Prophet (40%), ETS (35%), ARIMA (25%) with NaN-safe weight redistribution. Optional weight optimization via grid search (5% increments) over temporal CV. Requires 4+ quarters of history. ARIMA fallback chain: `(1,1,1)` → `(1,1,0)` → `(0,1,1)` → naive mean.
+OLS (40%), ETS (35%), ARIMA (25%) with NaN-safe weight redistribution. Optional weight optimization via grid search (5% increments) over temporal CV. Requires 4+ quarters of history. ARIMA fallback chain: `(1,1,1)` → `(1,1,0)` → `(0,1,1)` → naive mean. OLS replaced Prophet — no C-library dependencies, interpretable slope output, season-aware (trains only on same-season points).
+
+### Anomaly Detection
+
+`forecast_tool/forecasting/ols_forecast.py` — `detect_anomaly()` flags courses where the latest actual deviates >25% from the OLS trend. Uses leave-one-out validation when no `latest_actual` is supplied. Returns `flagged`, `deviation_pct`, `trend_yhat`, `actual`, and a human-readable `message`. Injected into `/api/forecast` response as `anomalyFlag` (only when `flagged=True`).
+
+### Scenario Layer
+
+`ForecastRequest` accepts `scenarios: List[{label, pct}]` (e.g. `[{"label":"conservative","pct":-9}]`). Each scenario result (`projectedSeats`, `sections`) is appended to the `ForecastResult` as `scenarios`. Computed after base forecast, before returning response.
 
 ## Key Data Files
 

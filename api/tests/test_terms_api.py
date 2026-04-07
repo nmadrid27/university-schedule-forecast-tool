@@ -1,5 +1,7 @@
 """Tests for GET /api/terms endpoint."""
 
+import csv
+import json
 import sys
 from pathlib import Path
 
@@ -7,6 +9,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import main
 from main import app  # noqa: E402
 
 client = TestClient(app)
@@ -53,3 +56,41 @@ def test_terms_labels_are_human_readable():
             season in item["label"]
             for season in ("Spring", "Fall", "Winter", "Summer")
         )
+
+
+def test_terms_ratio_forecastability_uses_closer_feeder_year(monkeypatch, tmp_path):
+    data_dir = tmp_path / "Data"
+    data_dir.mkdir()
+
+    master = data_dir / "Master.csv"
+    with master.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["TERM", "SUBJ", "CRS NUMBER", "ACT ENR", "CAMPUS"],
+        )
+        writer.writeheader()
+        # Keep Summer 2026 feeder missing so Winter 2027 is not sequence-forecastable.
+        for term in ["202610", "202620", "202630", "202710"]:
+            writer.writerow({
+                "TERM": term,
+                "SUBJ": "FOUN",
+                "CRS NUMBER": "110",
+                "ACT ENR": "10",
+                "CAMPUS": "SAV",
+            })
+
+    # Winter 2027's closer feeder is Fall 2026.
+    (data_dir / "Fall_2026_FOUN_Forecast_Test.csv").write_text(
+        "course,campus,projected_seats\nFOUN 110,Savannah,100\n",
+        encoding="utf-8",
+    )
+
+    cfg = tmp_path / "forecast_config.json"
+    cfg.write_text(json.dumps({"enrollment_source": str(master)}), encoding="utf-8")
+
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "CONFIG_PATH", cfg)
+
+    body = client.get("/api/terms").json()
+    forecastable_codes = {t["termCode"] for t in body["forecastable_terms"]}
+    assert "202720" in forecastable_codes  # Winter 2027

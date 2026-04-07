@@ -4,13 +4,15 @@ Exposes existing Python forecasting logic to the Next.js frontend.
 """
 
 import json
+import logging
+import math
 import re
 import sys
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional, List, Dict, Any, Literal, Tuple
 from datetime import datetime
 
 # Ensure forecast_tool package is importable from the api/ directory
@@ -23,13 +25,11 @@ from forecaster import (
     get_available_terms,
     term_code_to_label,
     resolve_term_info,
-    QUARTER_CYCLE,
 )
 from adjustments import (
     Adjustment,
     AdjustmentScope,
     load_adjustments,
-    save_adjustments,
     add_adjustment,
     toggle_adjustment,
     remove_adjustment,
@@ -37,7 +37,6 @@ from adjustments import (
     apply_output_adjustments,
 )
 from llm_service import (
-    LLMService,
     create_llm_service,
     load_api_key,
     save_api_key,
@@ -46,6 +45,7 @@ from llm_service import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "forecast_config.json"
 DATA_DIR = PROJECT_ROOT / "Data"
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="SCAD Forecast Tool API",
@@ -187,6 +187,15 @@ class ForecastRequest(BaseModel):
     term: str
     method: Optional[str] = "sequence"
     config: Optional[Dict[str, Any]] = None
+    # Scenario percentages: e.g. [{"label": "conservative", "pct": -9},
+    #                               {"label": "optimistic",  "pct": -5}]
+    scenarios: Optional[List[Dict[str, Any]]] = None
+
+class ScenarioResult(BaseModel):
+    label: str
+    pct: float
+    projectedSeats: float
+    sections: int
 
 class ForecastResult(BaseModel):
     course: str
@@ -196,6 +205,8 @@ class ForecastResult(BaseModel):
     change: Optional[float] = None
     changePercent: Optional[float] = None
     adjusted: Optional[bool] = None
+    anomalyFlag: Optional[Dict[str, Any]] = None
+    scenarios: Optional[List[ScenarioResult]] = None
 
 class ForecastSummary(BaseModel):
     totalStudents: float
@@ -226,12 +237,26 @@ class ConfigModel(BaseModel):
     enrollmentByMajorFile: Optional[str] = None
 
 class AdjustmentRequest(BaseModel):
-    type: str  # "config" or "output"
-    parameter: Optional[str] = None
-    operation: Optional[str] = None
+    type: Literal["config", "output"]
+    parameter: Optional[Literal["capacity", "progression_rate", "buffer_percent"]] = None
+    operation: Optional[Literal["multiply", "add", "set"]] = None
     value: float
     scope: Optional[Dict[str, Optional[str]]] = None
     reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_shape(self):
+        if self.type == "config":
+            if self.parameter is None:
+                raise ValueError("config adjustments require 'parameter'")
+            if self.operation is not None:
+                raise ValueError("config adjustments must not include 'operation'")
+        elif self.type == "output":
+            if self.operation is None:
+                raise ValueError("output adjustments require 'operation'")
+            if self.parameter is not None:
+                raise ValueError("output adjustments must not include 'parameter'")
+        return self
 
 class LLMConfigRequest(BaseModel):
     provider: Optional[str] = None
@@ -291,12 +316,52 @@ async def chat(request: ChatRequest):
                 # Persist any adjustments the LLM extracted
                 new_adjustments = []
                 for adj_data in llm_result.get("adjustments", []):
-                    scope = adj_data.get("scope", {})
+                    if not isinstance(adj_data, dict):
+                        logger.warning(
+                            "Skipping malformed LLM adjustment payload (expected object, got %s)",
+                            type(adj_data).__name__,
+                        )
+                        continue
+
+                    adj_type = adj_data.get("type", "output")
+                    parameter = adj_data.get("parameter")
+                    operation = adj_data.get("operation")
+
+                    # Skip malformed LLM adjustments rather than failing chat.
+                    if adj_type not in {"config", "output"}:
+                        continue
+                    if adj_type == "config":
+                        if parameter not in {"capacity", "progression_rate", "buffer_percent"}:
+                            continue
+                        operation = None
+                    else:
+                        if operation not in {"multiply", "add", "set"}:
+                            continue
+                        parameter = None
+
+                    value_raw = adj_data.get("value", 0)
+                    try:
+                        value = float(value_raw)
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Skipping malformed LLM adjustment with non-numeric value: %r",
+                            value_raw,
+                        )
+                        continue
+                    if not math.isfinite(value):
+                        logger.warning(
+                            "Skipping malformed LLM adjustment with non-finite value: %r",
+                            value_raw,
+                        )
+                        continue
+
+                    scope_raw = adj_data.get("scope")
+                    scope = scope_raw if isinstance(scope_raw, dict) else {}
                     adj = Adjustment(
-                        type=adj_data.get("type", "output"),
-                        parameter=adj_data.get("parameter"),
-                        operation=adj_data.get("operation"),
-                        value=adj_data.get("value", 0),
+                        type=adj_type,
+                        parameter=parameter,
+                        operation=operation,
+                        value=value,
                         scope=AdjustmentScope(
                             course=scope.get("course"),
                             campus=scope.get("campus"),
@@ -452,6 +517,36 @@ def run_forecast(request: ForecastRequest):
         if term_matches:
             previous = load_previous_forecast(term_matches[-1])
 
+        # Build OLS historical series for anomaly detection (best-effort)
+        _ols_historical: Dict[Tuple[str, str], Dict[str, int]] = {}
+        try:
+            from forecast_tool.forecasting.ols_forecast import detect_anomaly
+            from forecast_tool.data.loaders import load_historical_data
+            _df_hist = load_historical_data(data_dir=str(DATA_DIR))
+            if not _df_hist.empty:
+                _foun_hist = _df_hist[_df_hist["course_code"].str.startswith("FOUN ")]
+                for (_course, _campus), _grp in _foun_hist.groupby(["course_code", "campus"]):
+                    _hist_map = {}
+                    for _, _r in _grp.iterrows():
+                        _qtr_lookup = {"Fall": "10", "Winter": "20", "Spring": "30", "Summer": "40"}
+                        _tc = f"{_r['year']}{_qtr_lookup.get(_r['quarter'], '00')}"
+                        _hist_map[_tc] = int(_r["enrollment"])
+                    _ols_historical[(_course, _campus)] = _hist_map
+        except Exception:
+            pass
+
+        # Determine target season for anomaly detection
+        _target_season = None
+        try:
+            from forecaster import resolve_term_info
+            _info = resolve_term_info(target_term)
+            _target_season = _info.get("target_quarter", "").capitalize()
+        except Exception:
+            pass
+
+        # Parse scenario definitions from request
+        _scenarios_def = request.scenarios or []
+
         results = []
         for row in rows:
             seats = row["projected_seats"]
@@ -463,6 +558,34 @@ def run_forecast(request: ForecastRequest):
                 if prev_seats > 0:
                     change_pct = round((change / prev_seats) * 100, 1)
 
+            # Anomaly detection: compare forecast against OLS trend
+            anomaly = None
+            _hist = _ols_historical.get((row["course"], row["campus"]))
+            if _hist and _target_season:
+                try:
+                    anomaly = detect_anomaly(
+                        _hist, _target_season, latest_actual=seats
+                    ) or None
+                except Exception:
+                    pass
+
+            # Scenario projections
+            scenario_results = None
+            if _scenarios_def:
+                import math as _math
+                scenario_results = []
+                for sc in _scenarios_def:
+                    label = sc.get("label", str(sc.get("pct", 0)))
+                    pct = float(sc.get("pct", 0)) / 100.0
+                    sc_seats = max(0.0, seats * (1 + pct))
+                    sc_sections = _math.ceil(sc_seats / capacity) if capacity > 0 and sc_seats > 0 else 0
+                    scenario_results.append(ScenarioResult(
+                        label=label,
+                        pct=float(sc.get("pct", 0)),
+                        projectedSeats=round(sc_seats, 1),
+                        sections=sc_sections,
+                    ))
+
             results.append(
                 ForecastResult(
                     course=row["course"],
@@ -472,6 +595,8 @@ def run_forecast(request: ForecastRequest):
                     change=change,
                     changePercent=change_pct,
                     adjusted=row.get("adjusted"),
+                    anomalyFlag=anomaly if anomaly and anomaly.get("flagged") else None,
+                    scenarios=scenario_results,
                 )
             )
 
@@ -658,9 +783,10 @@ def list_terms():
                 except (ValueError, KeyError):
                     continue
                 feeder_q = info["closer_feeder"]["quarter"].capitalize()
-                # Determine feeder calendar year
-                feeder_parts = label.split()
-                feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else ""
+                feeder_tc = info["closer_feeder"]["term_code"]
+                feeder_label = term_code_to_label(feeder_tc)
+                feeder_parts = feeder_label.split()
+                feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else feeder_tc[:4]
                 pattern = f"{feeder_q}_{feeder_year}_FOUN_Forecast*.csv"
                 if list(DATA_DIR.glob(pattern)):
                     forecastable.append(TermOption(termCode=candidate, label=label))
@@ -770,27 +896,38 @@ class DiagnosticsResponse(BaseModel):
 
 @app.post("/api/forecast/ensemble", response_model=EnsembleResponse)
 def run_ensemble_forecast(request: EnsembleRequest):
-    """Run Prophet+ETS+ARIMA ensemble forecast on historical enrollment data."""
-    import os
+    """Run OLS+ETS+ARIMA ensemble forecast on historical enrollment data.
+
+    OLS (season-aware linear regression) replaces Prophet. It is faster,
+    fully interpretable, requires no external C library, and performs
+    comparably on 4-8 data-point enrollment series.
+    """
     import warnings
     import numpy as np
     import pandas as pd
     from forecast_tool.data.loaders import load_historical_data
     from forecast_tool.data.transformers import quarter_to_date
-    from forecast_tool.forecasting.prophet_forecast import forecast_prophet
+    from forecast_tool.forecasting.ols_forecast import forecast_ols
     from forecast_tool.forecasting.ets_forecast import forecast_ets
     from forecast_tool.forecasting.arima_forecast import forecast_arima
     from forecast_tool.forecasting.ensemble import (
         ensemble_forecast_weighted,
         optimize_ensemble_weights,
-        DEFAULT_WEIGHTS,
     )
+
+    # OLS replaces Prophet; redistribute former Prophet weight to OLS
+    OLS_WEIGHTS = {"ols": 0.40, "ets": 0.35, "arima": 0.25}
 
     try:
         disk_cfg = _read_disk_config()
         req_cfg = request.config or {}
         capacity = int(req_cfg.get("capacity", disk_cfg.get("capacity", 20)))
-        buffer_percent = float(req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0)))
+        buffer_percent = float(
+            req_cfg.get(
+                "bufferPercent",
+                req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 0.0)),
+            )
+        )
 
         df_hist = load_historical_data(data_dir=str(DATA_DIR))
         if df_hist.empty:
@@ -814,15 +951,15 @@ def run_ensemble_forecast(request: EnsembleRequest):
         courses = df_foun["course_code"].unique()
         periods = request.periods
 
+        results = []
+        weights_used = dict(OLS_WEIGHTS)
+        cv_mape = None
+
         forecast_fns = {
-            "prophet": forecast_prophet,
+            "ols": forecast_ols,
             "ets": forecast_ets,
             "arima": forecast_arima,
         }
-
-        results = []
-        weights_used = dict(DEFAULT_WEIGHTS)
-        cv_mape = None
 
         for course in sorted(courses):
             course_df = df_foun[df_foun["course_code"] == course]
@@ -841,16 +978,16 @@ def run_ensemble_forecast(request: EnsembleRequest):
                 continue
 
             # Optimize weights if requested and enough data
-            if request.optimize_weights and len(df_ts) >= 10:
+            if request.optimize_weights and len(df_ts) >= 8:
                 try:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
                         weights_used, best_error = optimize_ensemble_weights(
-                            df_ts, forecast_fns, min_train_size=6, horizon=1, step=1
+                            df_ts, forecast_fns, min_train_size=4, horizon=1, step=1
                         )
                     cv_mape = best_error if best_error != float("inf") else None
                 except (ValueError, Exception):
-                    weights_used = dict(DEFAULT_WEIGHTS)
+                    weights_used = dict(OLS_WEIGHTS)
 
             # Run each model
             with warnings.catch_warnings():
@@ -860,10 +997,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
                     try:
                         raw = fn(df_ts, periods)
                         if isinstance(raw, pd.DataFrame):
-                            if not raw.empty and "yhat" in raw.columns:
-                                preds[name] = float(raw["yhat"].values[-1])
-                            else:
-                                preds[name] = float("nan")
+                            preds[name] = float(raw["yhat"].values[-1]) if not raw.empty and "yhat" in raw.columns else float("nan")
                         else:
                             arr = np.asarray(raw).flatten()
                             preds[name] = float(arr[-1]) if len(arr) > 0 else float("nan")
@@ -874,7 +1008,6 @@ def run_ensemble_forecast(request: EnsembleRequest):
             if np.isnan(projected) or projected <= 0:
                 continue
 
-            # Apply buffer
             buffer_mult = 1.0 + (buffer_percent / 100.0)
             projected *= buffer_mult
             sections = int(np.ceil(projected / capacity)) if capacity > 0 else 0
@@ -884,7 +1017,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
                 campus="All",
                 projectedSeats=round(projected, 2),
                 sections=sections,
-                method="Ensemble (Prophet+ETS+ARIMA)",
+                method="Ensemble (OLS+ETS+ARIMA)",
                 weights={k: round(v, 3) for k, v in weights_used.items()},
                 cvMape=round(cv_mape, 2) if cv_mape is not None else None,
             ))
@@ -898,7 +1031,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
                 "totalStudents": round(total_students, 1),
                 "totalSections": total_sections,
                 "coursesForecasted": len(results),
-                "method": "Ensemble (Prophet+ETS+ARIMA)",
+                "method": "Ensemble (OLS+ETS+ARIMA)",
                 "weights": {k: round(v, 3) for k, v in weights_used.items()},
                 "cvMape": round(cv_mape, 2) if cv_mape is not None else None,
             },
@@ -914,9 +1047,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
 @app.get("/api/diagnostics", response_model=DiagnosticsResponse)
 def run_diagnostics():
     """Run stationarity and seasonality diagnostics on all FOUN courses."""
-    import os
     import numpy as np
-    import pandas as pd
     from forecast_tool.data.loaders import load_historical_data
     from forecast_tool.data.transformers import quarter_to_date
     from forecast_tool.diagnostics.stationarity_test import analyze_all_courses
