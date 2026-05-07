@@ -187,11 +187,25 @@ Provider: **Anthropic** (`claude-haiku-4-5-20251001`). API key stored in `.env.l
 
 `GET /api/llm/status` returns `configured: true/false` and `has_key: bool` — never the key itself.
 
+## Data Access Constraints
+
+The end user has **read access to one Cognos report only**: the **PZSMSCP — Flexible Master Schedule of Classes with Power Prompts** export. This is the sole institutional data source the production tool consumes.
+
+- **Master Schedule (PZSMSCP)** — drop the xlsx export at `Data/Master Schedule of Classes.xlsx`. The loader (`load_term_enrollments` in `api/forecaster.py`) auto-dispatches by file extension and handles the Cognos quirks: 16 rows of metadata before the header, multiple rows per CRN (one per instructor) which the loader dedupes by CRN before summing `ACT ENR`. CSV exports of the same report continue to work.
+- **By-major weighting (DISABLED in production)** — the prior `enrollment_by_major.xlsx` weighting feature requires student-level enrollment-by-major data the end user does not have access to (FERPA / role constraint). `forecast_config.json` ships with `"enrollmentByMajorFile": null`. The loader (`load_enrollment_by_major`) and crosswalk (`_COGNOS_TO_SEQ_PROGRAMS`) are preserved for development / testing and may be re-enabled if/when an aggregated by-major report becomes available.
+- **Admits demand (PZSAAPF-SL31)** — accepted-applicants report. Already wired via `admitsFile`. Loaded by `load_admits_foun_demand`.
+- **Manual adjustments** — per-term `set` adjustments in `Data/adjustments/<term>.json` are reserved for overriding model output against **measured ground truth (ACT enrollment from PZSMSCP)**, not against another forecaster's planning projection. Calibrating to a projection propagates that projection's error and masks model bias; see `Data/adjustments/README.md` for the policy. Directory is gitignored; commit a template into `Data/adjustments/` only as a reference copy. As of 2026-05-05 the Spring 2026 template is empty (prior overrides removed after PZSMSCP backtest — see `docs/SPRING_2026_BACKTEST.md`).
+- **`Data/clon_sav_atl_seat_projection_202630_20260107.xlsx`** — Jan 2026 SCAD planning **projection**, NOT actual demand. Useful as a "what was originally projected" reference when comparing the model to historical planning numbers. For backtesting accuracy, always use PZSMSCP `ACT ENR` counts as ground truth instead.
+
 ## Current State & Known Gaps
 
-- No test suites or test framework
-- No CI/CD pipeline
+- Test framework in place (pytest + Vitest); no CI/CD pipeline yet
+- 2 pre-existing backend test failures in `test_forecast_api.py` ratio-fallback tests (missing `summary` key in response)
 - `.venv/` may have broken symlinks after Python upgrades; recreate with `python3 -m venv .venv`
+- `Data/adjustments/` is gitignored — fresh worktrees show raw forecast numbers (no manual `set` overrides applied)
+- `forecast_spring26_from_sequence_guides.py` CLI has drifted significantly from `api/forecaster.py` — missing year filter, enrollment weights, legacy crosswalk, ATLANTA, admits demand. Do not use for production forecasts.
+- `_COGNOS_TO_SEQ_PROGRAMS` maps 34 of 46 Cognos codes; 12 unmapped codes are now logged via `logging.warning` (was silent). Mapping decisions moot in production (Cognos by-major weighting disabled — see "Data Access Constraints" above).
+- PZSMSCP xlsx loader added to `load_term_enrollments` / `get_available_terms` (auto-dispatch on file extension; dedupes co-taught rows by CRN). End-user input is now exclusively the PZSMSCP Cognos export.
 
 ## Code Standards
 

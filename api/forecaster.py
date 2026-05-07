@@ -489,6 +489,15 @@ def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
 def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]:
     """Load Cognos enrollment-by-major report (xlsx or CSV).
 
+    **DISABLED IN PRODUCTION** as of May 2026: the end user lacks access to
+    student-level Cognos reports needed to produce the by-major aggregated
+    input this loader expects. ``forecast_config.json`` ships with
+    ``"enrollmentByMajorFile": null``, which short-circuits invocation in
+    ``run_sequence_forecast``. The function is preserved for development and
+    testing use, and may be re-enabled if/when an aggregated data source
+    (e.g. an institutional research extract that does not require
+    student-level access) becomes available.
+
     **xlsx (Cognos export):**
       - Finds the header row by scanning for a cell containing 'term'
       - Course format ``FOUN110`` is normalised to ``FOUN 110``
@@ -510,6 +519,9 @@ def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]
 
     CAMPUS_MAP = {"SAV": "SAVANNAH", "NOW": "SCADNOW", "ATL": "ATLANTA"}
     result: Dict[str, Dict[str, Dict[str, float]]] = {}
+    # De-duplicate dropped-code warnings within a single load: log each
+    # unmapped Cognos code at most once per call.
+    _warned_unmapped: set = set()
 
     def _accumulate(campus_raw, course_raw, major_raw, enroll_raw, use_crosswalk: bool) -> None:
         campus = CAMPUS_MAP.get(str(campus_raw).strip().upper())
@@ -524,8 +536,16 @@ def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]
         except (ValueError, TypeError):
             return
         if use_crosswalk:
-            programs = _COGNOS_TO_SEQ_PROGRAMS.get(str(major_raw).strip().upper())
+            code = str(major_raw).strip().upper()
+            programs = _COGNOS_TO_SEQ_PROGRAMS.get(code)
             if not programs:
+                if code and code not in _warned_unmapped:
+                    logging.warning(
+                        "Unmapped Cognos major code %r dropped from enrollment weights "
+                        "(first seen on %s, enrollment=%s); add to _COGNOS_TO_SEQ_PROGRAMS to include.",
+                        code, course, enroll,
+                    )
+                    _warned_unmapped.add(code)
                 return
             per_prog = enroll / len(programs)
             for prog in programs:
