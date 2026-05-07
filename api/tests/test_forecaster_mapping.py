@@ -263,33 +263,61 @@ class TestYearFilter:
 # ── _active_curriculum_years ─────────────────────────────────────────────────
 
 class TestActiveCurriculumYears:
-    def test_spring_2026_returns_first_year_only(self):
-        """Spring 2026 is Year 1 of the FOUN curriculum → only First Year rows apply."""
-        assert _active_curriculum_years("202630") == ["First Year"]
+    """The FOUN curriculum was rolled out simultaneously across all four cohort
+    years in Fall 2025, not phased in cohort-by-cohort.  PZSMSCP Spring 2026
+    actuals show Second/Third Year FOUN courses (250/251/260/330/331/360) carrying
+    real ACT enrollment, which is mathematically incompatible with a phased-launch
+    model where the curriculum is only one term old.
 
-    def test_fall_2026_returns_first_and_second_year(self):
-        """Fall 2026 is Year 2 of the curriculum → First + Second Year apply."""
-        assert _active_curriculum_years("202710") == ["First Year", "Second Year"]
+    Therefore _active_curriculum_years should return all four labels (or None,
+    which has identical effect on load_sequence_mappings) for any term at or
+    after the curriculum launch, and None (filter disabled) for pre-launch
+    terms so historical backtests can use unfiltered seq-map rows.
+    """
 
-    def test_spring_2027_returns_first_and_second_year(self):
-        """Spring 2027 is still within Year 2 of the curriculum."""
-        assert _active_curriculum_years("202730") == ["First Year", "Second Year"]
+    def test_spring_2026_returns_all_four_years(self):
+        """Spring 2026 (post-launch) must return all four cohort labels so
+        Second/Third Year seq-map routes contribute to the forecast."""
+        assert _active_curriculum_years("202630") == [
+            "First Year", "Second Year", "Third Year", "Fourth Year"
+        ]
 
-    def test_fall_2027_returns_three_years(self):
-        assert _active_curriculum_years("202810") == [
-            "First Year", "Second Year", "Third Year"
+    def test_fall_2026_returns_all_four_years(self):
+        assert _active_curriculum_years("202710") == [
+            "First Year", "Second Year", "Third Year", "Fourth Year"
+        ]
+
+    def test_winter_2027_returns_all_four_years(self):
+        assert _active_curriculum_years("202720") == [
+            "First Year", "Second Year", "Third Year", "Fourth Year"
+        ]
+
+    def test_fall_2025_is_first_post_launch_term(self):
+        """Fall 2025 = 202610 is the first term of the simultaneous rollout."""
+        assert _active_curriculum_years("202610") == [
+            "First Year", "Second Year", "Third Year", "Fourth Year"
         ]
 
     def test_pre_curriculum_terms_return_none(self):
-        """Terms before the FOUN curriculum (Fall 2025) must return None so
-        the year filter is disabled, not an empty list that filters everything."""
+        """Terms before the FOUN curriculum (pre Fall 2025 = 202610) must return
+        None so historical backtests pass all seq-map rows through (filter
+        disabled, not an empty list that filters everything)."""
         assert _active_curriculum_years("202510") is None   # Fall 2024
         assert _active_curriculum_years("202530") is None   # Spring 2025
+        assert _active_curriculum_years("202410") is None   # Fall 2023
+        assert _active_curriculum_years("202010") is None   # well before launch
 
-    def test_fall_2028_and_beyond_returns_none(self):
-        """Once all four years are covered, no filter needed → return None."""
-        assert _active_curriculum_years("202910") is None
-        assert _active_curriculum_years("203010") is None
+    def test_far_future_terms_return_all_four_years(self):
+        """No reason to drop the filter post-2028: the curriculum still has
+        exactly four cohorts.  Returning all four labels is explicit and
+        equivalent to None for the seq map (no rows have non-cohort year
+        labels), so prefer the explicit list."""
+        assert _active_curriculum_years("202910") == [
+            "First Year", "Second Year", "Third Year", "Fourth Year"
+        ]
+        assert _active_curriculum_years("203010") == [
+            "First Year", "Second Year", "Third Year", "Fourth Year"
+        ]
 
 
 # ── Enrollment weights ────────────────────────────────────────────────────────

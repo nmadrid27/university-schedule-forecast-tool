@@ -94,15 +94,35 @@ _COGNOS_TO_SEQ_PROGRAMS: Dict[str, List[str]] = {
 def _active_curriculum_years(term_code: str) -> Optional[List[str]]:
     """Return curriculum year labels active for the given SCAD term code.
 
-    SCAD codes are YYYYQQ.  For all quarters, AY start = YYYY - 1 (e.g.
-    202630 → AY 2025-2026, start=2025).  Returns None once all four years
-    are covered (Fall 2028 / AY 2028-2029 onward), meaning no filter needed.
+    SCAD codes are YYYYQQ.  The FOUN curriculum was rolled out simultaneously
+    across all four cohort years in Fall 2025 (term code 202610), not phased
+    in cohort-by-cohort.  This is confirmed by PZSMSCP Spring 2026 actuals:
+    Second/Third Year FOUN courses (FOUN 250/251/260/330/331/360) carry real
+    ACT enrollment that cannot exist if only First-Year cohorts had entered
+    the curriculum.
+
+    For any term at or after Fall 2025, return all four cohort labels.
+    For pre-curriculum terms (before Fall 2025), return ``None`` so the
+    year filter is disabled and historical backtests pass all seq-map rows
+    through unfiltered.
+
+    Returning the explicit four-label list (rather than ``None``) for
+    post-launch terms has identical effect on ``load_sequence_mappings``
+    because the seq map only contains First/Second/Third/Fourth Year rows;
+    the explicit form documents intent and protects against future seq-map
+    additions of non-cohort year labels.
+
+    See ``docs/SPRING_2026_BACKTEST.md`` for the evidence behind this change
+    and the prior (incorrect) phased-launch assumption.
     """
+    # Fall 2025 = AY 2025-2026 = term code 202610.  Term codes are YYYYQQ
+    # where YYYY is the academic year start +1 for fall, so 202610 is the
+    # first post-launch term.  Anything before that (e.g. 202510 Fall 2024,
+    # 202530 Spring 2025) returns None to disable the filter for backtests.
     yyyy = int(str(term_code)[:4])
-    n = yyyy - _FOUN_CURRICULUM_START
-    if n <= 0 or n >= len(_YEAR_LABELS):
+    if yyyy <= _FOUN_CURRICULUM_START:
         return None
-    return _YEAR_LABELS[:n]
+    return list(_YEAR_LABELS)
 
 
 def resolve_term_info(target_term: str) -> Dict:

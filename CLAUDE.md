@@ -124,6 +124,7 @@ Format: `YYYYQQ` where QQ is `10`=Fall, `20`=Winter, `30`=Spring, `40`=Summer.
 3. Concurrent courses (co-requisites) use anchor selection to avoid double-counting
 4. Progression rate `0.95` applied per term gap: Fall→Spring = `0.95²`, Winter→Spring = `0.95¹`
 5. Section calculation: `ceil(projected_seats / capacity)`, default capacity = 20
+6. **Cohort year filter** (`_active_curriculum_years` in `api/forecaster.py`): for any term at or after Fall 2025 (term code 202610), all four cohort labels (`First Year`, `Second Year`, `Third Year`, `Fourth Year`) are active simultaneously. The FOUN curriculum was a simultaneous-rollout, not phased — confirmed by PZSMSCP Spring 2026 ACT actuals showing FOUN 250/251/260 enrollment that cannot exist under a phased First-Year-only model. Pre-curriculum terms (before Fall 2025) return `None` to disable the filter for historical backtests.
 
 ### Legacy Code Crosswalk
 
@@ -138,8 +139,9 @@ Used when sequencing map has no data for a target quarter (Summer):
 
 ### Campus Detection
 
-- **Sequencing map**: `campus` column; `"GENERAL"` applies to all campuses
+- **Sequencing map**: `campus` column; `"GENERAL"` applies to all campuses. Multi-campus rows use `|` as separator (e.g., `Savannah | Atlanta | SCADnow`). The forecaster groups by `(program, degree, campus, year)` per row independently — different year rows for the same program may carry different campus tags without affecting consistency.
 - **Enrollment data**: Campus resolved via `_normalize_campus_label()` (free-text: "SCADnow online", "scadnow", "online", "now" → SCADNOW) or `_normalize_campus_code()` (Master Schedule CAMPUS column: SAV/NOW/ATL). Both helpers defined in `api/forecaster.py`. Room `OLNOW` and section prefix `N` remain as fallback when no Campus column is present.
+- **Open issue (May 5, 2026 mechanical-fix sprint)**: campus expansion from `Savannah` to `Savannah | SCADnow` on First-Year seq-map rows produces only ~10 students of NOW demand for the newly-tagged target courses (FOUN 230 NOW = 10.5 vs ACT 37; FOUN 240 NOW = 10.5 vs ACT 64). Root cause unconfirmed — may be a disconnect between the seq-map campus tag and the CRN-level Master Schedule lookup that excludes programs not historically tagged for that campus. Worth a future-sprint diagnostic.
 
 ### 3-Model Ensemble (Alternative)
 

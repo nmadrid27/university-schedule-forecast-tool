@@ -160,6 +160,10 @@ If major sequencing guides change:
 1. Update `Data/FOUN_sequencing_map_by_major.csv`
 2. The format: columns for `campus`, `fall`, `winter`, `spring`, `summer` with FOUN course codes
 
+### What you do NOT need
+
+The tool used to consume an additional **Cognos enrollment-by-major report** to weight prerequisite enrollment by program. **This feature is disabled in production** because the underlying report requires student-level data access that the institutional planning role does not have. You do not need to pull or maintain this file. (`forecast_config.json` ships with `"enrollmentByMajorFile": null`.)
+
 ---
 
 ## How the Tool Works (Simplified)
@@ -272,7 +276,7 @@ A: The tool is designed for macOS. The `.command` launcher scripts are macOS-spe
 A: Only for the first-time setup (to download dependencies) and to receive updates. The forecasting itself runs entirely offline on your computer. If you're offline when launching, the auto-update check is skipped automatically.
 
 **Q: How accurate are the forecasts?**
-A: The sequence-based method is highly accurate for terms with good sequencing data because it directly traces enrolled students to their next courses. Ratio-based forecasts (used for Summer) are rougher estimates based on historical patterns.
+A: Treat the forecast as a planning floor, not a precise demand estimate. A Spring 2026 backtest against PZSMSCP ACT enrollment counts (the published, near-final demand) showed the model under-forecasts most courses by 20-50% on the Savannah campus and 30-65% on the SCADnow campus. The aggregate forecast captures roughly 70% of measured Savannah demand and 30% of measured SCADnow demand. Several upper-division FOUN courses (250, 251, 260, 330, 331, 360) currently produce no forecast row at all because of a curriculum-year filter assumption that needs revisiting. Full numbers and root-cause analysis are in `docs/SPRING_2026_BACKTEST.md`. The sequence-based method is still the most reliable approach available because it directly traces enrolled students to next-term courses, but plan with the under-forecast bias in mind: use ACT or MAX history for the same course as a sanity-check ceiling against any forecast.
 
 **Q: Can I forecast more than one term ahead?**
 A: The tool forecasts one term at a time. For multi-term planning, run forecasts sequentially (e.g., forecast Spring first, then use that to forecast Summer).
