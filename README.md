@@ -81,6 +81,12 @@ Three-tier application: Next.js frontend, FastAPI backend, Python forecasting en
 
 Edit via the Configuration sidebar in the UI, or directly in `forecast_config.json`.
 
+### Cognos Data Input
+
+The tool consumes a single Cognos report: **PZSMSCP — Flexible Master Schedule of Classes with Power Prompts**. Drop the export at `Data/Master Schedule of Classes.xlsx` (or `.csv`); both formats are supported. The xlsx loader auto-detects the header row, dedupes co-instructor rows by CRN, and filters by SCAD term codes.
+
+The companion `PZSAAPF-SL31` admits report (already wired) provides next-term applicant demand. No other Cognos reports are required.
+
 ## Documentation
 
 - **[docs/HANDOFF_GUIDE.md](docs/HANDOFF_GUIDE.md)** — User guide with setup, usage, and troubleshooting

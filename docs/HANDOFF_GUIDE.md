@@ -136,19 +136,23 @@ For one-click access from your Dock:
 
 ## Updating Data for New Terms
 
-When a new term starts and you have updated enrollment data:
+The tool consumes **one Cognos report** for term-to-term updates: the **PZSMSCP — Flexible Master Schedule of Classes with Power Prompts** export. When a new term begins, refresh this single file and you are done.
 
-### Adding New Enrollment Snapshots
+### Pulling the Master Schedule from Cognos
 
-1. Open the `Data/` folder inside `forecast-tool`
-2. Drop in your new CSV file (e.g., `Spring26.csv`)
-3. The file should have columns: `Course`, `Enrollment`, `Section #`, `Room`
-   (or Master Schedule format: `SUBJ`, `CRS NUMBER`, `ACT ENR`, `CAMPUS`, `TERM`)
+1. Log in to Cognos and run the report named **`PZSMSCP - Flexible Master Schedule of Classes with Power Prompts`**.
+2. In the prompt screen, select all terms relevant to the forecast (typically: the previous Fall, current Winter, and upcoming Spring — e.g. `202610`, `202620`, `202630`).
+3. Run the report and **export to Excel (.xlsx)**. CSV also works if you prefer.
+4. Save the file to `Data/Master Schedule of Classes.xlsx` (or `.csv`) inside the `forecast-tool` folder. **Keep the filename as `Master Schedule of Classes.xlsx`** — the tool looks for this name. If you previously had a `.csv` version, you can leave it; just update `forecast_config.json`'s `enrollment_source` to point at the new file.
 
-### Updating the Master Schedule
+The xlsx loader handles the Cognos quirks automatically:
+- Skips the ~16 rows of report metadata above the headers
+- Dedupes co-taught sections (the report emits one row per instructor per CRN)
+- Filters by SCAD term code
 
-1. Replace `Data/Master Schedule of Classes.csv` with the updated version
-2. Keep the same filename — the tool looks for this exact name
+### Adding New Enrollment Snapshots (Optional)
+
+If you have a one-off snapshot CSV in the older format (`Course`, `Enrollment`, `Section #`, `Room` columns), drop it in `Data/`. The tool detects the format automatically.
 
 ### Updating the Sequencing Map
 

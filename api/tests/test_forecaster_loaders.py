@@ -402,3 +402,181 @@ class TestLoadEnrollmentByMajorXlsx:
         p.write_bytes(b"this is not a valid xlsx file")
         result = load_enrollment_by_major(p)
         assert result == {}
+
+
+# ── load_term_enrollments — Master Schedule xlsx (PZSMSCP) ────────────────────
+
+# Canonical PZSMSCP column order (Cognos 'Flexible Master Schedule of Classes
+# with Power Prompts' export). Column indices line up with the real file.
+_PZSMSCP_HEADER = [
+    "SCHOOL", "DEPT", "CRN", "XLST ID", "STATUS", "SUBJ", "CRS NUMBER",
+    "SECTION", "SESSION DESC", "COURSE TITLE", "TERM", "CAMPUS",
+    "MEET DAYS", "MEET TIMES", "BLDG", "ROOM", "INSTR NAME", "INSTR ID",
+    "INSTR CAMPUS", "MAX ENR", "ACT ENR", "SEATS AVAIL", "WL MAX ENR",
+    "WL ACT ENR", "WL SEATS AVAIL", "PART OF TERM", "SECTION COUNT",
+]
+
+
+def _pzsmscp_xlsx(tmp_path: Path, sections: list, metadata_rows: int = 16) -> Path:
+    """Create a synthetic PZSMSCP-style xlsx.
+
+    sections = [(crn, subj, crs, term, campus, act_enr, instructor_name), ...]
+
+    Multiple section entries with the same CRN simulate co-taught sections
+    (one row per instructor). The loader must dedupe by CRN.
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Page1"
+    # Cognos metadata band (default 16 rows of various filter labels)
+    for i in range(metadata_rows):
+        ws.append([f"meta-{i}"] + [None] * 5)
+    # Header row
+    ws.append(_PZSMSCP_HEADER)
+    # Build a row template
+    def _row(crn, subj, crs, term, campus, act_enr, instr_name):
+        row = [None] * len(_PZSMSCP_HEADER)
+        row[_PZSMSCP_HEADER.index("SCHOOL")] = "School of Foundation Studies"
+        row[_PZSMSCP_HEADER.index("DEPT")] = "FOUN"
+        row[_PZSMSCP_HEADER.index("CRN")] = crn
+        row[_PZSMSCP_HEADER.index("STATUS")] = "A"
+        row[_PZSMSCP_HEADER.index("SUBJ")] = subj
+        row[_PZSMSCP_HEADER.index("CRS NUMBER")] = crs
+        row[_PZSMSCP_HEADER.index("SECTION")] = "01"
+        row[_PZSMSCP_HEADER.index("TERM")] = term
+        row[_PZSMSCP_HEADER.index("CAMPUS")] = campus
+        row[_PZSMSCP_HEADER.index("INSTR NAME")] = instr_name
+        row[_PZSMSCP_HEADER.index("MAX ENR")] = 25
+        row[_PZSMSCP_HEADER.index("ACT ENR")] = act_enr
+        return row
+    for entry in sections:
+        ws.append(_row(*entry))
+    p = tmp_path / "master_schedule.xlsx"
+    wb.save(p)
+    return p
+
+
+class TestLoadTermEnrollmentsMasterScheduleXLSX:
+    """PZSMSCP Cognos export — header on row 16, data row 17+, dedupe by CRN."""
+
+    def test_loads_savannah_foun_for_target_term(self, tmp_path):
+        from forecaster import load_term_enrollments  # local import for clarity
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202630", "SAV", 75, "Smith, J"),
+        ])
+        result = load_term_enrollments(p, term_code="202630")
+        assert result[("SAVANNAH", "FOUN 110")] == 75.0
+
+    def test_dedupes_co_taught_rows_by_crn(self, tmp_path):
+        """Critical: the real PZSMSCP file emits one row per instructor.
+        The loader must count each CRN exactly once."""
+        from forecaster import load_term_enrollments
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202630", "SAV", 80, "Smith, J"),
+            (10001, "FOUN", "110", "202630", "SAV", 80, "Jones, M"),
+            (10001, "FOUN", "110", "202630", "SAV", 80, "Brown, K"),
+        ])
+        result = load_term_enrollments(p, term_code="202630")
+        # 80 once, NOT 240
+        assert result[("SAVANNAH", "FOUN 110")] == 80.0
+
+    def test_filters_by_term_code(self, tmp_path):
+        from forecaster import load_term_enrollments
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202610", "SAV", 100, "Smith, J"),
+            (10002, "FOUN", "110", "202630", "SAV", 50, "Jones, M"),
+        ])
+        result = load_term_enrollments(p, term_code="202630")
+        assert result[("SAVANNAH", "FOUN 110")] == 50.0
+        # 202610 row excluded
+        assert sum(v for v in result.values()) == 50.0
+
+    def test_normalizes_campus_codes(self, tmp_path):
+        from forecaster import load_term_enrollments
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202630", "SAV", 60, "A"),
+            (10002, "FOUN", "110", "202630", "NOW", 40, "B"),
+            (10003, "FOUN", "110", "202630", "ATL", 20, "C"),
+        ])
+        result = load_term_enrollments(p, term_code="202630")
+        assert result[("SAVANNAH", "FOUN 110")] == 60.0
+        assert result[("SCADNOW", "FOUN 110")] == 40.0
+        assert result[("ATLANTA", "FOUN 110")] == 20.0
+
+    def test_unknown_campus_code_skipped(self, tmp_path):
+        from forecaster import load_term_enrollments
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202630", "XX", 99, "A"),
+        ])
+        result = load_term_enrollments(p, term_code="202630")
+        assert result == {}
+
+    def test_non_foun_courses_excluded(self, tmp_path):
+        from forecaster import load_term_enrollments
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "ENGL", "100", "202630", "SAV", 200, "A"),
+            (10002, "FOUN", "110", "202630", "SAV", 30, "B"),
+        ])
+        result = load_term_enrollments(p, term_code="202630")
+        assert result == {("SAVANNAH", "FOUN 110"): 30.0}
+
+    def test_no_term_code_returns_all_terms(self, tmp_path):
+        from forecaster import load_term_enrollments
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202610", "SAV", 100, "A"),
+            (10002, "FOUN", "111", "202630", "SAV", 50, "B"),
+        ])
+        result = load_term_enrollments(p)  # no term filter
+        assert result[("SAVANNAH", "FOUN 110")] == 100.0
+        assert result[("SAVANNAH", "FOUN 111")] == 50.0
+
+    def test_crosswalk_maps_legacy_codes(self, tmp_path):
+        from forecaster import load_term_enrollments
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "DRAW", "200", "202630", "SAV", 45, "A"),
+        ])
+        result = load_term_enrollments(p, term_code="202630",
+                                       crosswalk={"DRAW 200": "FOUN 230"})
+        assert result[("SAVANNAH", "FOUN 230")] == 45.0
+
+    def test_corrupt_xlsx_returns_empty_dict(self, tmp_path):
+        from forecaster import load_term_enrollments
+        p = tmp_path / "bad.xlsx"
+        p.write_bytes(b"not a real xlsx")
+        result = load_term_enrollments(p, term_code="202630")
+        assert result == {}
+
+    def test_header_detection_skips_metadata_rows(self, tmp_path):
+        """Header is auto-located by SUBJ/CRS NUMBER/ACT ENR — metadata above is ignored."""
+        from forecaster import load_term_enrollments
+        # 25 metadata rows (vs. real file's 16) — loader should still find the header
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "112", "202630", "SAV", 99, "A"),
+        ], metadata_rows=25)
+        result = load_term_enrollments(p, term_code="202630")
+        assert result[("SAVANNAH", "FOUN 112")] == 99.0
+
+
+class TestGetAvailableTermsXLSX:
+    """get_available_terms must also handle the PZSMSCP xlsx format."""
+
+    def test_returns_distinct_terms_from_xlsx(self, tmp_path):
+        from forecaster import get_available_terms
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202610", "SAV", 100, "A"),
+            (10002, "FOUN", "111", "202610", "SAV", 80, "A"),
+            (10003, "FOUN", "110", "202630", "SAV", 50, "A"),
+        ])
+        result = get_available_terms(p)
+        assert result == ["202610", "202630"]
+
+    def test_empty_xlsx_returns_empty_list(self, tmp_path):
+        from forecaster import get_available_terms
+        p = _pzsmscp_xlsx(tmp_path, [])
+        assert get_available_terms(p) == []
+
+    def test_corrupt_xlsx_returns_empty_list(self, tmp_path):
+        from forecaster import get_available_terms
+        p = tmp_path / "bad.xlsx"
+        p.write_bytes(b"not xlsx")
+        assert get_available_terms(p) == []

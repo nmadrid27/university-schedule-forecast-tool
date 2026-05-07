@@ -620,18 +620,118 @@ def _normalize_campus_code(code_upper: str) -> Optional[str]:
     return _MAP.get(code_upper)
 
 
+def _load_master_schedule_xlsx(
+    path: Path,
+    term_code: Optional[str] = None,
+    crosswalk: Optional[Dict[str, str]] = None,
+) -> Dict[Tuple[str, str], float]:
+    """Load enrollment totals from a PZSMSCP Master Schedule xlsx (Cognos export).
+
+    Format expectations:
+      - Single data sheet (typically named ``Page1``)
+      - Rows 0-15 are Cognos metadata; the header row contains 'SCHOOL', 'CRN',
+        'SUBJ', 'CRS NUMBER', 'TERM', 'CAMPUS', 'ACT ENR' (located by name)
+      - Multiple rows per CRN are common (one per instructor when co-taught);
+        rows are de-duplicated by CRN before aggregation to avoid multiplying
+        enrollment by instructor count.
+      - TERM values: SCAD term codes ('202610', '202620', '202630', ...)
+      - CAMPUS values: 'SAV', 'NOW', 'ATL'
+    """
+    totals: Dict[Tuple[str, str], float] = defaultdict(float)
+    xwalk = crosswalk or {}
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+    except Exception as exc:
+        logging.warning("Failed to open Master Schedule xlsx %s: %s", path, exc)
+        return {}
+
+    # Locate the header row by scanning for a row that contains the canonical
+    # column names. Cognos puts ~15 rows of report metadata above the header.
+    header_idx: Dict[str, int] = {}
+    in_data = False
+    seen_crns: set = set()
+
+    for row in ws.iter_rows(values_only=True):
+        if not row:
+            continue
+        if not in_data:
+            # A header row contains 'SUBJ' and 'CRS NUMBER' literals
+            cells = [str(c).strip().upper() if c is not None else "" for c in row]
+            if "SUBJ" in cells and "CRS NUMBER" in cells and "ACT ENR" in cells:
+                for i, c in enumerate(cells):
+                    if c:
+                        header_idx[c] = i
+                in_data = True
+            continue
+
+        # Data row
+        def _cell(name: str):
+            i = header_idx.get(name)
+            if i is None or i >= len(row):
+                return None
+            return row[i]
+
+        crn = _cell("CRN")
+        if crn is None:
+            continue
+        crn_key = str(crn).strip()
+        if not crn_key:
+            continue
+
+        # De-duplicate co-taught rows: only count each CRN once.
+        if crn_key in seen_crns:
+            continue
+
+        term_value = str(_cell("TERM") or "").strip()
+        if term_code and term_value != str(term_code):
+            # Skip but don't mark as seen — future term filters may differ.
+            continue
+
+        subj = str(_cell("SUBJ") or "").strip().upper()
+        crs = str(_cell("CRS NUMBER") or "").strip()
+        if not crs:
+            continue
+        raw_course = f"{subj} {crs}"
+        course = xwalk.get(raw_course, raw_course)
+        if not course.startswith("FOUN "):
+            seen_crns.add(crn_key)
+            continue
+
+        enrollment = parse_number(_cell("ACT ENR"))
+        campus_code = str(_cell("CAMPUS") or "").strip().upper()
+        campus = _normalize_campus_code(campus_code)
+        if campus is None:
+            seen_crns.add(crn_key)
+            continue
+
+        totals[(campus, course)] += enrollment
+        seen_crns.add(crn_key)
+
+    return totals
+
+
 def load_term_enrollments(
     path: Path,
     term_code: Optional[str] = None,
     crosswalk: Optional[Dict[str, str]] = None,
 ) -> Dict[Tuple[str, str], float]:
-    """Load enrollment totals per (campus, course) from a term CSV or Master Schedule.
+    """Load enrollment totals per (campus, course) from a term CSV, Master Schedule CSV, or Master Schedule xlsx.
+
+    Dispatches by file extension. xlsx is assumed to be the PZSMSCP Cognos
+    Master Schedule export (the only xlsx format the tool currently consumes
+    for enrollment data).
 
     Args:
         crosswalk: Optional legacy→FOUN code mapping. When provided, rows with
             legacy subject codes (DRAW, DSGN, etc.) are mapped to their FOUN
             equivalents so feeder enrollment is not silently dropped.
     """
+    if path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        return _load_master_schedule_xlsx(path, term_code=term_code, crosswalk=crosswalk)
+
     totals: Dict[Tuple[str, str], float] = defaultdict(float)
     xwalk = crosswalk or {}
     with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
@@ -717,8 +817,42 @@ def distribute_enrollments(
 
 
 def get_available_terms(master_schedule_path: Path) -> List[str]:
-    """Scan the Master Schedule CSV for distinct TERM values."""
-    terms = set()
+    """Scan the Master Schedule (CSV or xlsx) for distinct TERM values.
+
+    Dispatches by file extension. xlsx is assumed to be the PZSMSCP Cognos
+    Master Schedule export, which has ~15 rows of metadata before the header.
+    """
+    terms: set = set()
+
+    if master_schedule_path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(master_schedule_path, read_only=True, data_only=True)
+            ws = wb.active
+        except Exception as exc:
+            logging.warning("Failed to open Master Schedule xlsx %s: %s", master_schedule_path, exc)
+            return []
+        in_data = False
+        term_idx: Optional[int] = None
+        for row in ws.iter_rows(values_only=True):
+            if not row:
+                continue
+            if not in_data:
+                cells = [str(c).strip().upper() if c is not None else "" for c in row]
+                if "SUBJ" in cells and "CRS NUMBER" in cells and "TERM" in cells:
+                    term_idx = cells.index("TERM")
+                    in_data = True
+                continue
+            if term_idx is None or term_idx >= len(row):
+                continue
+            val = row[term_idx]
+            if val is None:
+                continue
+            s = str(val).strip()
+            if s:
+                terms.add(s)
+        return sorted(terms)
+
     with master_schedule_path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
