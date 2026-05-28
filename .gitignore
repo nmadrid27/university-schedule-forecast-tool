@@ -13,3 +13,11 @@ forecast-tool.zip
 
 .obsidian/
 Data/.archives/
+
+# graphify knowledge graph — regenerated locally, mirrored across
+# Nathan's machines via Syncthing, not committed.
+graphify-out/
+
+# Claude Code worktrees and local-only settings
+.claude/worktrees/
+.claude/settings.local.json
