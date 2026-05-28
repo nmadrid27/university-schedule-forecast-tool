@@ -149,7 +149,8 @@ def temporal_cross_validate(
     Args:
         df_ts: DataFrame with ``ds`` (datetime) and ``y`` (numeric) columns,
                sorted chronologically.  This matches the format expected by
-               ``forecast_prophet`` and ``forecast_ets``.
+               ``forecast_ols`` and ``forecast_ets`` (and legacy
+               ``forecast_prophet`` if Prophet is installed).
         forecast_fn: A callable with signature ``(df_ts, periods) -> predictions``.
                      The return value is either a DataFrame with a ``yhat``
                      column (Prophet convention) or an array-like of values

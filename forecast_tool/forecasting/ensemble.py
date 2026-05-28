@@ -11,7 +11,15 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Default weights for the 3-model ensemble
+# Default weights for the 3-model ensemble.
+# Production (api/main.py:/api/forecast/ensemble) builds its own OLS_WEIGHTS
+# dict keyed on "ols" and passes it explicitly to ensemble_forecast_weighted,
+# so it never reads DEFAULT_WEIGHTS. The "prophet" key below is retained for
+# the backward-compatible ensemble_forecast(prophet_pred, ...) interface
+# further down in this module. Full Prophet retirement (deleting
+# prophet_forecast.py, renaming the legacy interface, dropping prophet from
+# requirements.txt) is deferred — Prophet remains importable for callers in
+# environments where C-deps are available.
 DEFAULT_WEIGHTS: Dict[str, float] = {
     "prophet": 0.40,
     "ets": 0.35,
