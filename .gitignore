@@ -21,3 +21,10 @@ graphify-out/
 # Claude Code worktrees and local-only settings
 .claude/worktrees/
 .claude/settings.local.json
+
+# Desktop build artifacts
+.venv-build/
+.pyi-build/
+dist/
+/web/
+frontend/out/
