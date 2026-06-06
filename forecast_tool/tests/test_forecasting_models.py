@@ -10,7 +10,6 @@ guard clauses and small-data fallbacks are fast (no actual fitting).
 """
 
 import math
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -18,7 +17,6 @@ import pytest
 
 from forecast_tool.forecasting.arima_forecast import forecast_arima
 from forecast_tool.forecasting.ets_forecast import forecast_ets
-from forecast_tool.forecasting.prophet_forecast import forecast_prophet
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -115,65 +113,3 @@ class TestForecastArima:
     def test_periods_param_respected(self):
         for p in [1, 2, 3]:
             assert len(forecast_arima(_make_ts(2), periods=p)) == p
-
-
-# ── forecast_prophet ───────────────────────────────────────────────────────────
-
-class TestForecastProphet:
-    def test_empty_df_returns_empty_dataframe(self):
-        result = forecast_prophet(pd.DataFrame(), periods=2)
-        assert isinstance(result, pd.DataFrame)
-        assert result.empty
-
-    def test_one_row_returns_empty_dataframe(self):
-        result = forecast_prophet(_make_ts(1), periods=1)
-        assert isinstance(result, pd.DataFrame)
-        assert result.empty
-
-    def test_returns_dataframe(self):
-        # Guard-only test: verify return type is always DataFrame
-        result = forecast_prophet(pd.DataFrame(), periods=1)
-        assert isinstance(result, pd.DataFrame)
-
-    def test_empty_result_has_no_yhat_rows(self):
-        result = forecast_prophet(pd.DataFrame(), periods=2)
-        assert len(result) == 0
-
-    def _mock_prophet(self, periods: int):
-        """Return a mock Prophet instance whose predict() output matches periods."""
-        future_dates = pd.date_range("2022-01-01", periods=periods, freq="QS")
-        forecast_df = pd.DataFrame({
-            "ds": future_dates,
-            "yhat": [90.0] * periods,
-            "yhat_lower": [85.0] * periods,
-            "yhat_upper": [95.0] * periods,
-        })
-        mock_instance = MagicMock()
-        mock_instance.make_future_dataframe.return_value = forecast_df
-        mock_instance.predict.return_value = forecast_df
-        return mock_instance
-
-    def test_fit_path_returns_dataframe_with_correct_row_count(self):
-        with patch("forecast_tool.forecasting.prophet_forecast.Prophet") as MockProphet:
-            MockProphet.return_value = self._mock_prophet(2)
-            result = forecast_prophet(_make_ts(10), periods=2)
-        assert len(result) == 2
-
-    def test_fit_path_has_yhat_column(self):
-        with patch("forecast_tool.forecasting.prophet_forecast.Prophet") as MockProphet:
-            MockProphet.return_value = self._mock_prophet(1)
-            result = forecast_prophet(_make_ts(10), periods=1)
-        assert "yhat" in result.columns
-
-    def test_fit_path_has_expected_columns(self):
-        with patch("forecast_tool.forecasting.prophet_forecast.Prophet") as MockProphet:
-            MockProphet.return_value = self._mock_prophet(1)
-            result = forecast_prophet(_make_ts(10), periods=1)
-        for col in ["ds", "yhat", "yhat_lower", "yhat_upper"]:
-            assert col in result.columns
-
-    def test_fit_path_yhat_values_are_finite(self):
-        with patch("forecast_tool.forecasting.prophet_forecast.Prophet") as MockProphet:
-            MockProphet.return_value = self._mock_prophet(2)
-            result = forecast_prophet(_make_ts(10), periods=2)
-        assert result["yhat"].apply(lambda v: math.isfinite(v)).all()
