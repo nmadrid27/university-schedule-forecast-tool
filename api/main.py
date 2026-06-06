@@ -1116,6 +1116,22 @@ def run_diagnostics():
         raise HTTPException(status_code=500, detail="Diagnostics analysis failed")
 
 
+def mount_static_ui() -> None:
+    """Serve the statically-exported Next.js UI at / when present.
+
+    No-op in dev/test where the web build is absent. Mounted last so it does
+    not shadow /api routes.
+    """
+    from fastapi.staticfiles import StaticFiles
+
+    web_dir = paths.bundle_dir() / "web"
+    if web_dir.is_dir():
+        app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="ui")
+
+
+mount_static_ui()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
