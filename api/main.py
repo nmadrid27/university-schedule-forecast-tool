@@ -538,7 +538,6 @@ def run_forecast(request: ForecastRequest):
         # Determine target season for anomaly detection
         _target_season = None
         try:
-            from forecaster import resolve_term_info
             _info = resolve_term_info(target_term)
             _target_season = _info.get("target_quarter", "").capitalize()
         except Exception:
