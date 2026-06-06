@@ -3,6 +3,7 @@
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ForecastConfig } from '@/lib/types';
+import { api } from '@/lib/api';
 import { LLMSettings } from './LLMSettings';
 
 interface ConfigSidebarProps {
@@ -33,6 +34,21 @@ export function ConfigSidebar({
 }: ConfigSidebarProps) {
     const handleReset = () => {
         onConfigChange?.(DEFAULT_CONFIG);
+    };
+
+    const handleImport = async () => {
+        const w = window as unknown as {
+            pywebview?: { api?: { create_file_dialog?: () => Promise<string[] | null> } };
+        };
+        if (!w.pywebview?.api?.create_file_dialog) {
+            alert("Import is available in the desktop app.");
+            return;
+        }
+        const chosen = await w.pywebview.api.create_file_dialog();
+        if (chosen && chosen.length > 0) {
+            const res = await api.importDataFile(chosen[0]);
+            alert(`Imported. Stored as ${res.stored_as}`);
+        }
     };
 
     if (isCollapsed) {
@@ -70,6 +86,17 @@ export function ConfigSidebar({
 
             {/* Config sections */}
             <div className="flex-1 p-4 space-y-6 overflow-y-auto">
+                {/* Data */}
+                <ConfigSection title="Data">
+                    <button
+                        type="button"
+                        onClick={handleImport}
+                        className="w-full rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
+                    >
+                        Import Master Schedule…
+                    </button>
+                </ConfigSection>
+
                 {/* Forecast Horizon */}
                 <ConfigSection title="Forecast Horizon">
                     <label htmlFor="config-term" className="sr-only">Select forecast term</label>

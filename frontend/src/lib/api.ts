@@ -104,6 +104,13 @@ class ApiClient {
         });
     }
 
+    async importDataFile(sourcePath: string) {
+        return this.request<{ success: boolean; stored_as: string; data_dir: string }>(
+            '/api/data/import',
+            { method: 'POST', body: JSON.stringify({ source_path: sourcePath }) }
+        );
+    }
+
     // Get current config
     async getConfig() {
         return this.request<{

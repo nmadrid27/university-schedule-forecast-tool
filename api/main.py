@@ -865,6 +865,28 @@ async def list_data_files():
         raise HTTPException(status_code=500, detail="Failed to read data directory")
 
 
+class DataImportRequest(BaseModel):
+    source_path: str
+
+
+@app.post("/api/data/import")
+def import_data_file(request: DataImportRequest):
+    """Copy a user-selected schedule export into the Data directory."""
+    import shutil
+
+    src = Path(request.source_path)
+    if not src.is_file():
+        raise HTTPException(status_code=400, detail="Selected file does not exist")
+    if src.suffix.lower() not in (".xlsx", ".xlsm", ".xls", ".csv"):
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    dest_name = "Master Schedule of Classes" + src.suffix.lower()
+    dest = DATA_DIR / dest_name
+    shutil.copy2(src, dest)
+    return {"success": True, "stored_as": dest.name, "data_dir": str(DATA_DIR)}
+
+
 # ============== Ensemble & Diagnostics Routes ==============
 
 class EnsembleRequest(BaseModel):
