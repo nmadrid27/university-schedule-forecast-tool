@@ -1,0 +1,5 @@
+# Desktop packaging toolchain (not needed to run the dev servers).
+# Final exact pins are set during the Stage 3 build against the build venv.
+-r requirements.txt
+pywebview>=5.3
+pyinstaller>=6.10
