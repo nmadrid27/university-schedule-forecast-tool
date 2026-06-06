@@ -17,11 +17,12 @@ client = TestClient(main.app)
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
-    """Redirect CONFIG_PATH and ENV_FILE for every test."""
+    """Redirect CONFIG_PATH and the settings.json key store for every test."""
     monkeypatch.setattr(main, "CONFIG_PATH", tmp_path / "forecast_config.json")
-    # Patch the ENV_FILE in llm_service so key lookups don't hit the real file
+    # Redirect settings_path in llm_service so key lookups don't hit real app-data
     import llm_service
-    monkeypatch.setattr(llm_service, "ENV_FILE", tmp_path / ".env.local")
+    settings = tmp_path / "settings.json"
+    monkeypatch.setattr(llm_service, "settings_path", lambda: settings)
     # Clear LLM_API_KEY env var so tests are deterministic
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
@@ -92,12 +93,13 @@ def test_put_llm_config_persists_provider(tmp_path, monkeypatch):
     assert saved["llm"]["model"] == "llama3.2"
 
 
-def test_put_llm_config_saves_api_key_to_env_file(tmp_path, monkeypatch):
+def test_put_llm_config_saves_api_key_to_settings(tmp_path, monkeypatch):
     import llm_service
-    env_file = tmp_path / ".env.local"
-    monkeypatch.setattr(llm_service, "ENV_FILE", env_file)
+    settings = tmp_path / "settings.json"
+    monkeypatch.setattr(llm_service, "settings_path", lambda: settings)
     client.put("/api/llm/config", json={"provider": "anthropic", "api_key": "sk-test-123"})
-    assert "LLM_API_KEY=sk-test-123" in env_file.read_text()
+    saved = json.loads(settings.read_text())
+    assert saved["LLM_API_KEY"] == "sk-test-123"
 
 
 def test_put_llm_config_does_not_save_key_to_config_json(tmp_path, monkeypatch):
