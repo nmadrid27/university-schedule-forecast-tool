@@ -1,0 +1,15 @@
+{
+  "sequence_map": "Data/FOUN_sequencing_map_by_major.csv",
+  "enrollment_source": "Data/Master Schedule of Classes.csv",
+  "capacity": 20,
+  "progression_rate": 0.95,
+  "buffer_percent": 10,
+  "default_term": "Spring 2026",
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5-20251001",
+    "base_url": null
+  },
+  "admitsFile": "Data/PZSAAPF-SL31 - Accepted Applicants with Latest Decision.xlsx",
+  "enrollmentByMajorFile": null
+}
