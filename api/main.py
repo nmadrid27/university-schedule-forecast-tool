@@ -41,10 +41,12 @@ from llm_service import (
     load_api_key,
     save_api_key,
 )
+import paths
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = PROJECT_ROOT / "forecast_config.json"
-DATA_DIR = PROJECT_ROOT / "Data"
+paths.ensure_seeded()
+PROJECT_ROOT = paths.app_data_dir()
+CONFIG_PATH = paths.config_path()
+DATA_DIR = paths.data_dir()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -839,7 +841,7 @@ def update_config(config: ConfigModel):
 async def list_data_files():
     """List available data files in the Data directory."""
     try:
-        data_dir = Path(__file__).parent.parent / "Data"
+        data_dir = DATA_DIR
         files = []
 
         if data_dir.exists():
