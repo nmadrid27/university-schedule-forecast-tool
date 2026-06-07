@@ -24,8 +24,18 @@ def test_import_copies_source_file(tmp_path):
     dest = main.DATA_DIR / "Master Schedule of Classes.xlsx"
     assert dest.is_file()
     assert dest.read_bytes() == b"fake-xlsx-bytes"
+    import json as _json
+    saved_cfg = _json.loads(main.CONFIG_PATH.read_text())
+    assert saved_cfg["enrollment_source"] == "Data/Master Schedule of Classes.xlsx"
 
 
 def test_import_rejects_missing_file():
     r = client.post("/api/data/import", json={"source_path": "/no/such/file.xlsx"})
+    assert r.status_code == 400
+
+
+def test_import_rejects_unsupported_extension(tmp_path):
+    src = tmp_path / "notes.txt"
+    src.write_text("nope")
+    r = client.post("/api/data/import", json={"source_path": str(src)})
     assert r.status_code == 400

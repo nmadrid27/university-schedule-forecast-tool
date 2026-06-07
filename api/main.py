@@ -688,7 +688,7 @@ def llm_status():
 
 @app.put("/api/llm/config")
 def update_llm_config(request: LLMConfigRequest):
-    """Update LLM provider/model/key. Writes key to .env.local, rest to config."""
+    """Update LLM provider/model/key. Writes key to app-data settings.json, rest to config."""
     disk_cfg = _read_disk_config()
     llm_cfg = disk_cfg.get("llm", {})
 
@@ -884,6 +884,13 @@ def import_data_file(request: DataImportRequest):
     dest_name = "Master Schedule of Classes" + src.suffix.lower()
     dest = DATA_DIR / dest_name
     shutil.copy2(src, dest)
+
+    # Point the active config at the imported file so the forecast finds it
+    # regardless of extension (.xlsx vs .csv).
+    cfg = _read_disk_config()
+    cfg["enrollment_source"] = f"Data/{dest.name}"
+    _write_disk_config(cfg)
+
     return {"success": True, "stored_as": dest.name, "data_dir": str(DATA_DIR)}
 
 
