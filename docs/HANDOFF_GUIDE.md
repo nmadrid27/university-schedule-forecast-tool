@@ -46,7 +46,11 @@ You normally do not need to open this folder.
 
 ### Loading Data Each Quarter
 
-When a new term begins, click **Import Master Schedule…** inside the app and pick your PZSMSCP export. The app copies it into place for you. There is no need to move files by hand.
+Click **Import Master Schedule…** inside the app and pick your PZSMSCP export. The app copies it into place; there is no need to move files by hand.
+
+**The export must include the two quarters *before* the term you want to forecast,** because the model projects forward from those feeder terms. To forecast Spring, the file must contain that year's Fall and Winter (term codes `202610` and `202620`) alongside Spring. Do **not** import the term's own final actuals; that is the result you are trying to predict, and the app will now stop and tell you the feeder term is missing instead of returning a screen of zeros.
+
+Optionally, click **Import Admits (optional)…** and pick the **PZSAAPF — Accepted Applicants** report. It feeds new-student demand into the intro courses (FOUN 110/111); without it, those courses read low.
 
 ### Updating the App
 

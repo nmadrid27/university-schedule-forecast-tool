@@ -104,9 +104,10 @@ class ApiClient {
         });
     }
 
-    async importDataFile(file: File) {
+    async importDataFile(file: File, kind: 'master' | 'admits' = 'master') {
         const form = new FormData();
         form.append('file', file);
+        form.append('kind', kind);
         // Use raw fetch (not this.request) so the browser sets the multipart
         // Content-Type with its boundary; do not set it manually.
         const response = await fetch(`${this.baseUrl}/api/data/import`, {
@@ -117,7 +118,7 @@ class ApiClient {
             const error = await response.json().catch(() => ({}));
             throw new Error(error.detail || `Import failed: ${response.status}`);
         }
-        return response.json() as Promise<{ success: boolean; stored_as: string; data_dir: string }>;
+        return response.json() as Promise<{ success: boolean; stored_as: string; kind: string; data_dir: string }>;
     }
 
     // Get current config

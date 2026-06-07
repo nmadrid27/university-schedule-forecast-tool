@@ -9,7 +9,7 @@ import math
 import re
 import sys
 from pathlib import Path
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal, Tuple
@@ -510,6 +510,24 @@ def run_forecast(request: ForecastRequest):
         if active_adjustments and rows:
             rows = apply_output_adjustments(active_adjustments, rows, capacity)
 
+        # Guardrail: an all-zero forecast means the Master Schedule has no
+        # enrollment for the feeder terms this target needs (e.g. a Spring-only
+        # export cannot forecast Spring). Tell the user instead of returning a
+        # screen of zeros.
+        if rows and sum((r.get("projected_seats") or 0) for r in rows) == 0:
+            _g = resolve_term_info(target_term)
+            _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
+            _farther = term_code_to_label(_g.get("farther_feeder", {}).get("term_code", ""))
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"No feeder enrollment found to forecast {target_term}. The imported "
+                    f"Master Schedule must include the prior quarters ({_farther} and "
+                    f"{_closer}). Import the PZSMSCP export covering those terms, not the "
+                    f"{target_term} actuals."
+                ),
+            )
+
         # Load previous forecast for change comparison (best-effort).
         # Only compare against the same term's prior forecast to avoid
         # misleading change deltas from cross-term comparisons.
@@ -615,6 +633,8 @@ def run_forecast(request: ForecastRequest):
                 adjustmentsApplied=adj_count if adj_count > 0 else None,
             ),
         )
+    except HTTPException:
+        raise
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Required data file not found")
     except ValueError as e:
@@ -866,29 +886,35 @@ async def list_data_files():
 
 
 @app.post("/api/data/import")
-async def import_data_file(file: UploadFile = File(...)):
-    """Receive an uploaded schedule export and store it in the Data directory.
+async def import_data_file(file: UploadFile = File(...), kind: str = Form("master")):
+    """Receive an uploaded report and store it in the Data directory.
 
-    Uses a multipart upload rather than a server-side file path so the browser
-    or native webview file picker (a plain <input type="file">) drives the
-    selection. Avoids the pywebview js_api dialog, which does not display
-    reliably on macOS when called from a worker thread.
+    kind="master" stores the PZSMSCP Master Schedule (the forecast's enrollment
+    source); kind="admits" stores the PZSAAPF accepted-applicants report (new-
+    student demand for intro courses). A multipart upload lets a plain
+    <input type="file"> drive the picker, avoiding the pywebview js_api dialog
+    which does not display reliably on macOS from a worker thread.
     """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in (".xlsx", ".xlsm", ".xls", ".csv"):
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    dest = DATA_DIR / ("Master Schedule of Classes" + suffix)
-    dest.write_bytes(await file.read())
-
-    # Point the active config at the imported file so the forecast finds it
-    # regardless of extension (.xlsx vs .csv).
+    content = await file.read()
     cfg = _read_disk_config()
-    cfg["enrollment_source"] = f"Data/{dest.name}"
+    if kind == "admits":
+        dest = DATA_DIR / ("Admits" + suffix)
+        dest.write_bytes(content)
+        cfg["admitsFile"] = f"Data/{dest.name}"
+    else:
+        dest = DATA_DIR / ("Master Schedule of Classes" + suffix)
+        dest.write_bytes(content)
+        # Point the active config at the imported schedule so the forecast finds
+        # it regardless of extension (.xlsx vs .csv).
+        cfg["enrollment_source"] = f"Data/{dest.name}"
     _write_disk_config(cfg)
 
-    return {"success": True, "stored_as": dest.name, "data_dir": str(DATA_DIR)}
+    return {"success": True, "stored_as": dest.name, "kind": kind, "data_dir": str(DATA_DIR)}
 
 
 # ============== Ensemble & Diagnostics Routes ==============

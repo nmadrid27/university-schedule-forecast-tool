@@ -50,3 +50,19 @@ def test_import_rejects_unsupported_extension():
         files={"file": ("notes.txt", b"nope", "text/plain")},
     )
     assert r.status_code == 400
+
+
+def test_import_admits_sets_admits_file():
+    r = client.post(
+        "/api/data/import",
+        files={"file": ("PZSAAPF.xlsx", b"fake",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"kind": "admits"},
+    )
+    assert r.status_code == 200
+    assert (main.DATA_DIR / "Admits.xlsx").is_file()
+    import json
+    saved = json.loads(main.CONFIG_PATH.read_text())
+    assert saved["admitsFile"] == "Data/Admits.xlsx"
+    # Master Schedule source must be untouched by an admits import
+    assert "enrollment_source" not in saved or "Admits" not in saved.get("enrollment_source", "")

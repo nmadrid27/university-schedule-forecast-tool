@@ -11,7 +11,7 @@ The app runs fully offline. Your data stays on the machine in an app-data folder
 - macOS: `~/Library/Application Support/SCAD Forecast Tool/`
 - Windows: `%APPDATA%\SCAD Forecast Tool\`
 
-To load each quarter's data, click the in-app **Import Master Schedule…** button and pick the PZSMSCP export. The app copies it into the data folder for you.
+To load data, click the in-app **Import Master Schedule…** button and pick the PZSMSCP export. **It must include the two quarters before the term you are forecasting** (e.g. Fall and Winter to forecast Spring); the model projects forward from those feeder terms, so a Spring-only file produces no forecast (the app will say so). Optionally use **Import Admits (optional)…** to load the PZSAAPF accepted-applicants report for new-student demand. The app copies files into the data folder for you.
 
 The first launch shows a one-time security prompt because v1 is unsigned. On macOS, right-click the app and choose **Open**. On Windows, click **More info**, then **Run anyway**.
 

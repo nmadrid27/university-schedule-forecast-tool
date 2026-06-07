@@ -196,6 +196,17 @@ def test_forecast_ratio_fallback_passes_target_term(monkeypatch, tmp_path):
     assert captured.get("target_term") == "Summer 2026"
 
 
+# --------------- No-feeder guardrail ---------------------------------------
+
+def test_forecast_all_zero_returns_422_with_feeder_message(monkeypatch):
+    """An all-zero forecast (no feeder enrollment) returns a clear 422, not zeros."""
+    zero_row = dict(course="FOUN 113", campus="SAV", projected_seats=0, sections=0, adjusted=False)
+    monkeypatch.setattr(main, "run_sequence_forecast", lambda **kw: [zero_row])
+    r = client.post("/api/forecast", json={"term": "Spring 2026"})
+    assert r.status_code == 422
+    assert "feeder" in r.json()["detail"].lower()
+
+
 # --------------- Change delta ---------------------------------------------
 
 def test_forecast_change_delta_when_previous_forecast_exists(monkeypatch, tmp_path):

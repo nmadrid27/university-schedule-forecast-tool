@@ -38,16 +38,20 @@ export function ConfigSidebar({
     };
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const importKindRef = useRef<'master' | 'admits'>('master');
 
-    const handleImportClick = () => fileInputRef.current?.click();
+    const triggerImport = (kind: 'master' | 'admits') => {
+        importKindRef.current = kind;
+        fileInputRef.current?.click();
+    };
 
     const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         e.target.value = ''; // reset so the same file can be re-selected
         if (!file) return;
         try {
-            const res = await api.importDataFile(file);
-            alert(`Imported. Stored as ${res.stored_as}`);
+            const res = await api.importDataFile(file, importKindRef.current);
+            alert(`Imported ${res.kind === 'admits' ? 'admits report' : 'Master Schedule'}. Stored as ${res.stored_as}`);
         } catch (err) {
             alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -99,10 +103,17 @@ export function ConfigSidebar({
                     />
                     <button
                         type="button"
-                        onClick={handleImportClick}
+                        onClick={() => triggerImport('master')}
                         className="w-full rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
                     >
                         Import Master Schedule…
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => triggerImport('admits')}
+                        className="w-full mt-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
+                    >
+                        Import Admits (optional)…
                     </button>
                 </ConfigSection>
 
