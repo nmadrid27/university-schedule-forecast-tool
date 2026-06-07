@@ -4,7 +4,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 echo "[1/4] Building frontend (static export)..."
-corepack enable
+# Use pnpm from PATH (e.g. Homebrew); fall back to corepack only if absent.
+command -v pnpm >/dev/null 2>&1 || corepack enable
 (cd frontend && NEXT_PUBLIC_API_URL='' pnpm install --frozen-lockfile && pnpm run build)
 
 echo "[2/4] Installing desktop build deps..."
