@@ -11,7 +11,7 @@ export interface ChatRequest {
 
 export interface ForecastRequest {
     term: string;
-    method?: 'sequence' | 'prophet' | 'demand';
+    method?: 'sequence' | 'demand';
     config?: {
         capacity?: number;
         progressionRate?: number;
