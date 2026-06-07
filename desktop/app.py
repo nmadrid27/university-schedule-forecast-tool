@@ -52,20 +52,6 @@ def _wait_for_health(port: int, timeout: float = 30.0) -> bool:
     return False
 
 
-class _Bridge:
-    """JS-callable API exposed to the webview for native dialogs."""
-
-    def create_file_dialog(self):
-        import webview
-
-        result = webview.windows[0].create_file_dialog(
-            webview.OPEN_DIALOG,
-            allow_multiple=False,
-            file_types=("Schedule exports (*.xlsx;*.xls;*.csv)", "All files (*.*)"),
-        )
-        return list(result) if result else None
-
-
 def run() -> int:
     import webview
 
@@ -81,7 +67,6 @@ def run() -> int:
         f"http://127.0.0.1:{port}/",
         width=1400,
         height=900,
-        js_api=_Bridge(),
     )
     webview.start()  # blocks until the window is closed
     server.stop()

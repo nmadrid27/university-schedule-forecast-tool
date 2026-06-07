@@ -104,11 +104,20 @@ class ApiClient {
         });
     }
 
-    async importDataFile(sourcePath: string) {
-        return this.request<{ success: boolean; stored_as: string; data_dir: string }>(
-            '/api/data/import',
-            { method: 'POST', body: JSON.stringify({ source_path: sourcePath }) }
-        );
+    async importDataFile(file: File) {
+        const form = new FormData();
+        form.append('file', file);
+        // Use raw fetch (not this.request) so the browser sets the multipart
+        // Content-Type with its boundary; do not set it manually.
+        const response = await fetch(`${this.baseUrl}/api/data/import`, {
+            method: 'POST',
+            body: form,
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Import failed: ${response.status}`);
+        }
+        return response.json() as Promise<{ success: boolean; stored_as: string; data_dir: string }>;
     }
 
     // Get current config

@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef, type ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ForecastConfig } from '@/lib/types';
@@ -36,18 +37,19 @@ export function ConfigSidebar({
         onConfigChange?.(DEFAULT_CONFIG);
     };
 
-    const handleImport = async () => {
-        const w = window as unknown as {
-            pywebview?: { api?: { create_file_dialog?: () => Promise<string[] | null> } };
-        };
-        if (!w.pywebview?.api?.create_file_dialog) {
-            alert("Import is available in the desktop app.");
-            return;
-        }
-        const chosen = await w.pywebview.api.create_file_dialog();
-        if (chosen && chosen.length > 0) {
-            const res = await api.importDataFile(chosen[0]);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleImportClick = () => fileInputRef.current?.click();
+
+    const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // reset so the same file can be re-selected
+        if (!file) return;
+        try {
+            const res = await api.importDataFile(file);
             alert(`Imported. Stored as ${res.stored_as}`);
+        } catch (err) {
+            alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
         }
     };
 
@@ -88,9 +90,16 @@ export function ConfigSidebar({
             <div className="flex-1 p-4 space-y-6 overflow-y-auto">
                 {/* Data */}
                 <ConfigSection title="Data">
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".xlsx,.xls,.xlsm,.csv"
+                        className="hidden"
+                        onChange={handleFileChange}
+                    />
                     <button
                         type="button"
-                        onClick={handleImport}
+                        onClick={handleImportClick}
                         className="w-full rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
                     >
                         Import Master Schedule…

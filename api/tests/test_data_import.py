@@ -16,26 +16,37 @@ def _tmp_data(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "CONFIG_PATH", tmp_path / "forecast_config.json")
 
 
-def test_import_copies_source_file(tmp_path):
-    src = tmp_path / "PZSMSCP_export.xlsx"
-    src.write_bytes(b"fake-xlsx-bytes")
-    r = client.post("/api/data/import", json={"source_path": str(src)})
+def test_import_stores_uploaded_xlsx_and_points_config():
+    r = client.post(
+        "/api/data/import",
+        files={"file": (
+            "PZSMSCP export.xlsx",
+            b"fake-xlsx-bytes",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )},
+    )
     assert r.status_code == 200
     dest = main.DATA_DIR / "Master Schedule of Classes.xlsx"
     assert dest.is_file()
     assert dest.read_bytes() == b"fake-xlsx-bytes"
-    import json as _json
-    saved_cfg = _json.loads(main.CONFIG_PATH.read_text())
-    assert saved_cfg["enrollment_source"] == "Data/Master Schedule of Classes.xlsx"
+
+    import json
+    saved = json.loads(main.CONFIG_PATH.read_text())
+    assert saved["enrollment_source"] == "Data/Master Schedule of Classes.xlsx"
 
 
-def test_import_rejects_missing_file():
-    r = client.post("/api/data/import", json={"source_path": "/no/such/file.xlsx"})
-    assert r.status_code == 400
+def test_import_accepts_csv():
+    r = client.post(
+        "/api/data/import",
+        files={"file": ("export.csv", b"a,b\n1,2\n", "text/csv")},
+    )
+    assert r.status_code == 200
+    assert (main.DATA_DIR / "Master Schedule of Classes.csv").is_file()
 
 
-def test_import_rejects_unsupported_extension(tmp_path):
-    src = tmp_path / "notes.txt"
-    src.write_text("nope")
-    r = client.post("/api/data/import", json={"source_path": str(src)})
+def test_import_rejects_unsupported_extension():
+    r = client.post(
+        "/api/data/import",
+        files={"file": ("notes.txt", b"nope", "text/plain")},
+    )
     assert r.status_code == 400

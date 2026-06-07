@@ -28,6 +28,7 @@ hiddenimports = (
     + collect_submodules("statsmodels")
     + collect_submodules("pandas")
     + collect_submodules("uvicorn")
+    + collect_submodules("multipart")
 )
 datas = (
     [(os.path.join(ROOT_DIR, "frontend", "out"), "web")]

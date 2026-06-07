@@ -9,7 +9,7 @@ import math
 import re
 import sys
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal, Tuple
@@ -865,25 +865,22 @@ async def list_data_files():
         raise HTTPException(status_code=500, detail="Failed to read data directory")
 
 
-class DataImportRequest(BaseModel):
-    source_path: str
-
-
 @app.post("/api/data/import")
-def import_data_file(request: DataImportRequest):
-    """Copy a user-selected schedule export into the Data directory."""
-    import shutil
+async def import_data_file(file: UploadFile = File(...)):
+    """Receive an uploaded schedule export and store it in the Data directory.
 
-    src = Path(request.source_path)
-    if not src.is_file():
-        raise HTTPException(status_code=400, detail="Selected file does not exist")
-    if src.suffix.lower() not in (".xlsx", ".xlsm", ".xls", ".csv"):
+    Uses a multipart upload rather than a server-side file path so the browser
+    or native webview file picker (a plain <input type="file">) drives the
+    selection. Avoids the pywebview js_api dialog, which does not display
+    reliably on macOS when called from a worker thread.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".xlsx", ".xlsm", ".xls", ".csv"):
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    dest_name = "Master Schedule of Classes" + src.suffix.lower()
-    dest = DATA_DIR / dest_name
-    shutil.copy2(src, dest)
+    dest = DATA_DIR / ("Master Schedule of Classes" + suffix)
+    dest.write_bytes(await file.read())
 
     # Point the active config at the imported file so the forecast finds it
     # regardless of extension (.xlsx vs .csv).
