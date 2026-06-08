@@ -10,6 +10,8 @@ import { LLMSettings } from './LLMSettings';
 interface ConfigSidebarProps {
     config: ForecastConfig;
     onConfigChange?: (config: Partial<ForecastConfig>) => void;
+    onRunForecast?: () => void;
+    isRunning?: boolean;
     onToggleCollapse?: () => void;
     isCollapsed?: boolean;
 }
@@ -30,6 +32,8 @@ const DEFAULT_CONFIG: ForecastConfig = {
 export function ConfigSidebar({
     config,
     onConfigChange,
+    onRunForecast,
+    isRunning = false,
     onToggleCollapse,
     isCollapsed = false,
 }: ConfigSidebarProps) {
@@ -130,6 +134,14 @@ export function ConfigSidebar({
                             <option key={t} value={t}>{t}</option>
                         ))}
                     </select>
+                    <Button
+                        type="button"
+                        className="mt-2 w-full"
+                        onClick={onRunForecast}
+                        disabled={isRunning}
+                    >
+                        {isRunning ? 'Running…' : `Run Forecast`}
+                    </Button>
                 </ConfigSection>
 
                 {/* Parameters */}
