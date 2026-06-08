@@ -3,6 +3,10 @@ name: Build Windows Installer
 on:
   workflow_dispatch:
   push:
+    # Branch trigger builds the installer on each push to the release branch
+    # so the Windows build stays validated while iterating. Tag pushes (v*)
+    # remain the release trigger.
+    branches: ["feat/desktop-packaging"]
     tags: ["v*"]
 
 jobs:
