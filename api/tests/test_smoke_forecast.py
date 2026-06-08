@@ -21,6 +21,6 @@ def test_health():
 
 @pytest.mark.skipif(not DATA_PRESENT, reason="requires real seq map in Data/")
 def test_spring_forecast_returns_rows():
-    body = client.post("/api/forecast", json={"term": "Spring 2026"}).json()
+    body = client.post("/api/forecast", json={"term": "Spring 2026", "method": "sequence"}).json()
     assert "summary" in body
     assert len(body["results"]) > 0

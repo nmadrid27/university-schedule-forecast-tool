@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from forecaster import (
     run_sequence_forecast,
+    run_sameseason_forecast,
     run_ratio_forecast,
     load_previous_forecast,
     get_available_terms,
@@ -187,7 +188,7 @@ class ChatResponse(BaseModel):
 
 class ForecastRequest(BaseModel):
     term: str
-    method: Optional[str] = "sequence"
+    method: Optional[str] = "historical"
     config: Optional[Dict[str, Any]] = None
     # Scenario percentages: e.g. [{"label": "conservative", "pct": -9},
     #                               {"label": "optimistic",  "pct": -5}]
@@ -458,75 +459,83 @@ def run_forecast(request: ForecastRequest):
         admits_path = resolve_optional("admitsFile")
         enrollment_by_major_path = resolve_optional("enrollmentByMajorFile")
 
-        # Run the real forecast
-        rows = run_sequence_forecast(
-            sequence_map_path=sequence_map_path,
-            enrollment_source_path=enrollment_source_path,
-            target_term=target_term,
-            capacity=capacity,
-            progression_rate=progression_rate,
-            buffer_percent=buffer_percent,
-            admits_path=admits_path,
-            enrollment_by_major_path=enrollment_by_major_path,
-        )
+        # Run the real forecast. The historical same-season method is the
+        # default; the sequence engine (with ratio fallback) is opt-in.
+        method = (request.method or disk_cfg.get("method") or "historical").lower()
 
-        # Fallback: if sequence-based returned no results (e.g. Summer has
-        # no sequencing data), try the ratio-based method using the closest
-        # feeder quarter's existing forecast output.
-        method_label = "Sequence-based"
-        if not rows:
-            info = resolve_term_info(target_term)
-            feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
-            feeder_tc = info["closer_feeder"]["term_code"]
-            feeder_label = term_code_to_label(feeder_tc)
-            feeder_year = feeder_label.split()[1] if " " in feeder_label else feeder_tc[:4]
-            # Look for the feeder quarter's forecast CSV
-            feeder_pattern = f"{feeder_quarter}_{feeder_year}_FOUN_Forecast*.csv"
-            feeder_csvs = sorted(DATA_DIR.glob(feeder_pattern))
-            historical_path = DATA_DIR / "FOUN_Historical.csv"
-            if feeder_csvs:
-                # Prefer the Sequence Guides output (most reliable),
-                # then try others until one has compatible columns.
-                preferred = [
-                    p for p in feeder_csvs
-                    if "Sequence_Guides" in p.name or "sequence_guides" in p.name
-                ]
-                candidates = preferred + [
-                    p for p in reversed(feeder_csvs) if p not in preferred
-                ]
-                for csv_path in candidates:
-                    rows = run_ratio_forecast(
-                        feeder_forecast_path=csv_path,
-                        historical_data_path=historical_path,
-                        target_term=target_term,
-                        capacity=capacity,
-                        buffer_percent=buffer_percent,
-                    )
-                    if rows:
-                        method_label = "Ratio-based"
-                        break
+        if method == "sequence":
+            rows = run_sequence_forecast(
+                sequence_map_path=sequence_map_path,
+                enrollment_source_path=enrollment_source_path,
+                target_term=target_term,
+                capacity=capacity,
+                progression_rate=progression_rate,
+                buffer_percent=buffer_percent,
+                admits_path=admits_path,
+                enrollment_by_major_path=enrollment_by_major_path,
+            )
+            method_label = "Sequence-based"
+            # Fallback: if sequence-based returned no results (e.g. Summer has
+            # no sequencing data), try the ratio-based method using the closest
+            # feeder quarter's existing forecast output.
+            if not rows:
+                info = resolve_term_info(target_term)
+                feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
+                feeder_tc = info["closer_feeder"]["term_code"]
+                feeder_label = term_code_to_label(feeder_tc)
+                feeder_year = feeder_label.split()[1] if " " in feeder_label else feeder_tc[:4]
+                feeder_pattern = f"{feeder_quarter}_{feeder_year}_FOUN_Forecast*.csv"
+                feeder_csvs = sorted(DATA_DIR.glob(feeder_pattern))
+                historical_path = DATA_DIR / "FOUN_Historical.csv"
+                if feeder_csvs:
+                    preferred = [p for p in feeder_csvs
+                                 if "Sequence_Guides" in p.name or "sequence_guides" in p.name]
+                    candidates = preferred + [p for p in reversed(feeder_csvs) if p not in preferred]
+                    for csv_path in candidates:
+                        rows = run_ratio_forecast(
+                            feeder_forecast_path=csv_path,
+                            historical_data_path=historical_path,
+                            target_term=target_term,
+                            capacity=capacity,
+                            buffer_percent=buffer_percent,
+                        )
+                        if rows:
+                            method_label = "Ratio-based"
+                            break
+        else:
+            rows = run_sameseason_forecast(
+                master_schedule_path=enrollment_source_path,
+                target_term=target_term,
+                capacity=capacity,
+                buffer_percent=buffer_percent,
+            )
+            method_label = "Same-season historical"
 
         # Apply output-level adjustments to rows
         if active_adjustments and rows:
             rows = apply_output_adjustments(active_adjustments, rows, capacity)
 
-        # Guardrail: an all-zero forecast means the Master Schedule has no
-        # enrollment for the feeder terms this target needs (e.g. a Spring-only
-        # export cannot forecast Spring). Tell the user instead of returning a
-        # screen of zeros.
-        if rows and sum((r.get("projected_seats") or 0) for r in rows) == 0:
+        # Guardrail: nothing to forecast means the Master Schedule lacks the
+        # data this method needs. Explain it instead of returning zeros.
+        no_data = (not rows) or sum((r.get("projected_seats") or 0) for r in rows) == 0
+        if no_data:
             _g = resolve_term_info(target_term)
-            _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
-            _farther = term_code_to_label(_g.get("farther_feeder", {}).get("term_code", ""))
-            raise HTTPException(
-                status_code=422,
-                detail=(
+            if method == "sequence":
+                _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
+                _farther = term_code_to_label(_g.get("farther_feeder", {}).get("term_code", ""))
+                _detail = (
                     f"No feeder enrollment found to forecast {target_term}. The imported "
                     f"Master Schedule must include the prior quarters ({_farther} and "
-                    f"{_closer}). Import the PZSMSCP export covering those terms, not the "
-                    f"{target_term} actuals."
-                ),
-            )
+                    f"{_closer}). Import the PZSMSCP export covering those terms."
+                )
+            else:
+                _yy = int(_g["target_term_code"][:4]) - 1
+                _prior = term_code_to_label(f"{_yy}{_g['target_term_code'][4:]}")
+                _detail = (
+                    f"No same-season history found to forecast {target_term}. Import a "
+                    f"Master Schedule that includes the prior year's same quarter ({_prior})."
+                )
+            raise HTTPException(status_code=422, detail=_detail)
 
         # Load previous forecast for change comparison (best-effort).
         # Only compare against the same term's prior forecast to avoid

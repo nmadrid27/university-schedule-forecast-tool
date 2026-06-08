@@ -86,7 +86,7 @@ def test_chat_extracts_scadnow_campus():
 # --------------- /api/forecast ---------------
 
 def test_forecast_spring_2026_returns_results():
-    response = client.post("/api/forecast", json={"term": "Spring 2026"})
+    response = client.post("/api/forecast", json={"term": "Spring 2026", "method": "sequence"})
 
     assert response.status_code == 200
     body = response.json()
@@ -96,7 +96,7 @@ def test_forecast_spring_2026_returns_results():
 
 
 def test_forecast_result_shape():
-    response = client.post("/api/forecast", json={"term": "Spring 2026"})
+    response = client.post("/api/forecast", json={"term": "Spring 2026", "method": "sequence"})
 
     result = response.json()["results"][0]
     assert "course" in result
@@ -106,7 +106,7 @@ def test_forecast_result_shape():
 
 
 def test_forecast_summary_method_is_sequence_based():
-    response = client.post("/api/forecast", json={"term": "Spring 2026"})
+    response = client.post("/api/forecast", json={"term": "Spring 2026", "method": "sequence"})
 
     assert response.json()["summary"]["method"] == "Sequence-based"
 
