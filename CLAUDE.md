@@ -117,7 +117,15 @@ Format: `YYYYQQ` where QQ is `10`=Fall, `20`=Winter, `30`=Spring, `40`=Summer.
 
 **Critical**: Fall uses `calendar_year + 1` for the academic year. Fall 2025 → term code `202610`. All other quarters: academic year = calendar year.
 
-### Sequence-Based Forecasting (Primary)
+### Historical Same-Season Forecasting (Default)
+
+`/api/forecast` defaults to the historical same-season method (`run_sameseason_forecast` in `api/forecaster.py`). Each FOUN course is projected from its own prior same-season enrollment, using post-rollout terms only (academic-year code > `_FOUN_CURRICULUM_START`). With 2+ same-season years it fits the season-aware OLS trend; with one year it falls back to last year's same term (level). This method is independent of the sequencing map and immune to sequencing-guide changes.
+
+- Method selection: the request `method` field (`"historical"` or `"sequence"`), then the config key `"method"`, default `"historical"`. The sequence-map engine remains available via `method: "sequence"`.
+- Data requirement: the imported Master Schedule must include the **prior year's same quarter** (e.g. Fall 2025 to forecast Fall 2026). A missing same-season term returns a 422 naming the term to import.
+- Brand-new courses with no history are returned flagged (method `"same_season_new_course"`, 0 seats) for a manual estimate.
+
+### Sequence-Based Forecasting (opt-in via `method: "sequence"`)
 
 1. `FOUN_sequencing_map_by_major.csv` maps prerequisite courses → target FOUN courses by major and campus
 2. "CHOICE" entries split demand evenly (`1/N` weighting) across listed course options
