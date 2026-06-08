@@ -5,9 +5,13 @@ on:
   push:
     # Branch trigger builds the installer on each push to the release branch
     # so the Windows build stays validated while iterating. Tag pushes (v*)
-    # remain the release trigger.
+    # remain the release trigger. paths-ignore skips docs-only branch pushes;
+    # GitHub does not apply path filters to tag pushes, so releases always build.
     branches: ["feat/desktop-packaging"]
     tags: ["v*"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
 
 jobs:
   build:
