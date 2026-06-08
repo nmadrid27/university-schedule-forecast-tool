@@ -1016,6 +1016,90 @@ def run_sequence_forecast(
     return output_rows
 
 
+def run_sameseason_forecast(
+    master_schedule_path: Path,
+    target_term: str,
+    capacity: int = 20,
+    buffer_percent: float = 0.0,
+    crosswalk: Optional[Dict[str, str]] = None,
+) -> List[Dict]:
+    """Forecast each FOUN course from its own prior same-season enrollment.
+
+    Robust to sequencing-guide changes: it never reads the sequencing map.
+    Uses only post-rollout terms (academic-year part of the code
+    > _FOUN_CURRICULUM_START). With 2+ prior same-season points it fits the
+    season-aware OLS trend; with one point it uses that value (level).
+    Assumes the prior same-season terms are consecutive (no gap years), which
+    holds for the post-rollout window. Courses offered in the target term but
+    with no same-season history are returned with projected_seats=0 and method
+    "same_season_new_course" so the admin can set a manual estimate.
+
+    Returns rows shaped like run_sequence_forecast:
+        {course, campus, projected_seats, sections, method}
+    Returns [] when no same-season history (and no target-term courses) exist;
+    the caller turns that into a clear guardrail error.
+    """
+    import pandas as pd
+    from forecast_tool.forecasting.ols_forecast import forecast_ols
+
+    if crosswalk is None:
+        crosswalk = load_crosswalk(master_schedule_path.parent / "sequence_crosswalk_template.csv")
+
+    info = resolve_term_info(target_term)
+    target_code = info["target_term_code"]
+    yyyy = int(target_code[:4])
+    qq = target_code[4:]
+
+    prior_codes: List[str] = []
+    k = 1
+    while (yyyy - k) > _FOUN_CURRICULUM_START:
+        prior_codes.append(f"{yyyy - k}{qq}")
+        k += 1
+
+    series: DefaultDict[Tuple[str, str], Dict[int, float]] = defaultdict(dict)
+    for code in prior_codes:
+        for (campus, course), seats in load_term_enrollments(
+            master_schedule_path, code, crosswalk=crosswalk
+        ).items():
+            if str(course).startswith("FOUN"):
+                series[(campus, course)][int(code[:4])] = seats
+
+    campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
+    buffer_mult = 1.0 + (buffer_percent / 100.0)
+    rows: List[Dict] = []
+
+    for (campus, course), year_map in series.items():
+        pts = sorted(year_map.items())
+        if len(pts) >= 2:
+            df = pd.DataFrame({"ds": [str(y) for y, _ in pts], "y": [e for _, e in pts]})
+            fc = forecast_ols(df, periods=1)
+            value = float(fc.iloc[-1]["yhat"]) if not fc.empty else float(pts[-1][1])
+        else:
+            value = float(pts[-1][1])
+        seats = value * buffer_mult
+        rows.append({
+            "course": course,
+            "campus": campus_label.get(campus, campus),
+            "projected_seats": seats,
+            "sections": compute_sections(seats, capacity),
+            "method": "same_season",
+        })
+
+    for (campus, course), _seats in load_term_enrollments(
+        master_schedule_path, target_code, crosswalk=crosswalk
+    ).items():
+        if str(course).startswith("FOUN") and (campus, course) not in series:
+            rows.append({
+                "course": course,
+                "campus": campus_label.get(campus, campus),
+                "projected_seats": 0.0,
+                "sections": 0,
+                "method": "same_season_new_course",
+            })
+
+    return rows
+
+
 def _compute_historical_ratios(
     historical_path: Path,
     target_quarter_code: str,
