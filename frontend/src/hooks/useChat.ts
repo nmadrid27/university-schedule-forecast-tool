@@ -61,7 +61,7 @@ export function useChat(config?: ForecastConfig) {
 
                 const forecastResponse = await api.runForecast({
                     term: forecastTerm,
-                    method: 'sequence',
+                    method: 'historical',
                     config: config ? {
                         capacity: config.capacity,
                         progressionRate: config.progressionRate,
@@ -121,7 +121,7 @@ export function useChat(config?: ForecastConfig) {
         try {
             const forecastResponse = await api.runForecast({
                 term: forecastTerm,
-                method: 'sequence',
+                method: 'historical',
                 config: config ? {
                     capacity: config.capacity,
                     progressionRate: config.progressionRate,
