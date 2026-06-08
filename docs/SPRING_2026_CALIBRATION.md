@@ -62,8 +62,8 @@ FOUN 112 (Winter) is the dominant feeder for 113, 230, 240, 245 and contributes 
 - NOW two-terms-back ("farther") feeders contribute **0** across the board; NOW relies entirely on Winter routes. Add farther routes for NOW programs.
 - NOW 230/240/245 route at ~8% where actuals need 3-5×.
 
-### E. Admits undercount (separate lever, not the seq map)
-FOUN 110/111 on both campuses come from the admits file (PZSAAPF-SL31) and run ~half of actual (110 SAV 30 vs 60; 111 NOW 18 vs 51). Investigate `load_admits_foun_demand` and the admits→FOUN mapping coverage. This is independent of the sequencing map.
+### E. Admits undercount — root cause found: premature snapshot (operational, not a code bug)
+FOUN 110/111 come from the admits file (PZSAAPF-SL31) and run ~half of actual (110 SAV 30 vs 60; 111 NOW 18 vs 51). **Confirmed root cause:** `load_admits_foun_demand` counts an admit toward a course only if that FOUN code is already in their *Currently Registered Courses* (column U). In the Feb 24 export, of 237 admits (146 SAV / 90 NOW) only **49% had registered for any course and 33% for a FOUN course**, so the counts are ~half of eventual enrollment. The loader is correct; the input was pulled too early. **Fix: pull PZSAAPF closer to the term** (after registration opens). Optional code guardrail: warn when the registered-rate is low (premature snapshot). Minor lever overall, since 110/111 are small courses next to the FOUN 112 re-weighting in (B).
 
 ### F. Missing courses
 FOUN 222 SAV (21), 330 (6), 331 (16), 360 (4) have no map entries. Mostly low-volume upper-year; decide whether to add minimal routes or accept as out-of-model.
@@ -76,3 +76,11 @@ The model emits Atlanta rows (e.g., FOUN 251 ATL = 74) that have no counterpart 
 - **Single-term calibration.** This is one term (Spring 2026). The **structural** fixes (C remove-phantom, D coverage, E admits, F missing) generalize; **fine per-course re-weighting** (B tuning, and small near-OK rows) risks over-fitting to one term. Validate against a second term's actuals before trusting fine tweaks.
 - **Course-level direction, program-level edits.** The table gives the magnitude and direction per course; the map is program × year × campus. You decide which program rows carry each re-weighting.
 - **Highest-confidence first:** A (done), C (over-routes), D (NOW coverage), E (admits). B is high-leverage but coupled; treat its fine values as directional.
+
+## Fall 2026 in-progress check (2026-06-08)
+
+Compared the April 7 same-season Fall 2026 forecast (`Data/Fall_2026_FOUN_Forecast.xlsx`) to early Fall 2026 registration (`Fall2026.csv`, term 202710, generated 6/8):
+
+- **Aggregate:** forecast ~7,426 vs **seats actually scheduled ~7,102 (96% match)**; enrolled so-far 2,878 (39%, early — Fall intake registers late). Caveat: seats-offered is the schedulers' plan, not final actuals.
+- **Per-course (offsetting, same pattern as Spring):** FOUN 113 SAV over-forecast (~960 vs 314 seats scheduled / 271 already enrolled) — the same-season method used 113's *Spring* base for a *Fall* target, but 113 is spring-heavy. Under-forecast (early enrollment already exceeds the forecast): FOUN 230 SAV (291 vs ~175), 251 SAV (220 vs ~205), 260 SAV (59 vs ~37), plus 230/250/251 NOW.
+- **Takeaway:** same-season tracks the total/plan well; per-course accuracy hinges on choosing the right base season — use the prior **same season as the target term**, not whichever season the course is largest in.
