@@ -26,6 +26,7 @@ from forecaster import (
     get_available_terms,
     term_code_to_label,
     resolve_term_info,
+    _post_rollout_prior_same_season_codes,
 )
 from adjustments import (
     Adjustment,
@@ -519,8 +520,8 @@ def run_forecast(request: ForecastRequest):
         # data this method needs. Explain it instead of returning zeros.
         no_data = (not rows) or sum((r.get("projected_seats") or 0) for r in rows) == 0
         if no_data:
-            _g = resolve_term_info(target_term)
             if method == "sequence":
+                _g = resolve_term_info(target_term)
                 _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
                 _farther = term_code_to_label(_g.get("farther_feeder", {}).get("term_code", ""))
                 _detail = (
@@ -529,12 +530,21 @@ def run_forecast(request: ForecastRequest):
                     f"{_closer}). Import the PZSMSCP export covering those terms."
                 )
             else:
-                _yy = int(_g["target_term_code"][:4]) - 1
-                _prior = term_code_to_label(f"{_yy}{_g['target_term_code'][4:]}")
-                _detail = (
-                    f"No same-season history found to forecast {target_term}. Import a "
-                    f"Master Schedule that includes the prior year's same quarter ({_prior})."
-                )
+                _priors = _post_rollout_prior_same_season_codes(target_term)
+                if not _priors:
+                    _season = target_term.split()[0]
+                    _detail = (
+                        f"{target_term} is the first post-rollout {_season}, so there is no "
+                        f"prior same-season term under the current FOUN curriculum to forecast "
+                        f"from. Switch to the sequence method for this term, or set a manual "
+                        f"estimate."
+                    )
+                else:
+                    _prior = term_code_to_label(_priors[0])
+                    _detail = (
+                        f"No same-season history found to forecast {target_term}. Import a "
+                        f"Master Schedule that includes the prior year's same quarter ({_prior})."
+                    )
             raise HTTPException(status_code=422, detail=_detail)
 
         # Load previous forecast for change comparison (best-effort).

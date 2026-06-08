@@ -66,3 +66,11 @@ def test_buffer_applied(monkeypatch):
     row = next(r for r in rows if r["course"] == "FOUN 113")
     assert round(row["projected_seats"]) == 220
     assert row["campus"] == "SCADnow"
+
+
+def test_post_rollout_prior_codes():
+    from forecaster import _post_rollout_prior_same_season_codes as priors
+    assert priors("Spring 2026") == []                      # first post-rollout Spring
+    assert priors("Fall 2026") == ["202610"]                # Fall 2025
+    assert priors("Spring 2027") == ["202630"]              # Spring 2026
+    assert priors("Fall 2027") == ["202710", "202610"]      # most recent first

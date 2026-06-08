@@ -270,3 +270,24 @@ def test_historical_no_history_returns_422(monkeypatch):
     r = client.post("/api/forecast", json={"term": "Fall 2026"})
     assert r.status_code == 422
     assert "same-season" in r.json()["detail"].lower()
+
+
+def test_historical_first_post_rollout_season_message(monkeypatch):
+    """First post-rollout instance of a season (Spring 2026): the 422 must not
+    tell the user to import a pre-rollout term the filter would discard."""
+    monkeypatch.setattr(main, "run_sameseason_forecast", lambda **kw: [])
+    r = client.post("/api/forecast", json={"term": "Spring 2026"})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "Spring 2025" not in detail            # pre-rollout; would be discarded
+    assert "first post-rollout" in detail.lower()
+    assert "sequence" in detail.lower()
+
+
+def test_historical_missing_prior_year_names_importable_term(monkeypatch):
+    """When a post-rollout prior exists but is absent from the file (Spring 2027),
+    the 422 names the importable prior-year same quarter (Spring 2026)."""
+    monkeypatch.setattr(main, "run_sameseason_forecast", lambda **kw: [])
+    r = client.post("/api/forecast", json={"term": "Spring 2027"})
+    assert r.status_code == 422
+    assert "Spring 2026" in r.json()["detail"]

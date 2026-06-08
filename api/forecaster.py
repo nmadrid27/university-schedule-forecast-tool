@@ -1016,6 +1016,26 @@ def run_sequence_forecast(
     return output_rows
 
 
+def _post_rollout_prior_same_season_codes(target_term: str) -> List[str]:
+    """Post-rollout prior same-season term codes for the historical method.
+
+    Returns the same-quarter term codes (most recent first) whose academic year
+    is after _FOUN_CURRICULUM_START. Empty when target_term is the first
+    post-rollout instance of its season, meaning no prior same-season term under
+    the current curriculum exists to forecast from.
+    """
+    info = resolve_term_info(target_term)
+    target_code = info["target_term_code"]
+    yyyy = int(target_code[:4])
+    qq = target_code[4:]
+    codes: List[str] = []
+    k = 1
+    while (yyyy - k) > _FOUN_CURRICULUM_START:
+        codes.append(f"{yyyy - k}{qq}")
+        k += 1
+    return codes
+
+
 def run_sameseason_forecast(
     master_schedule_path: Path,
     target_term: str,
@@ -1047,14 +1067,8 @@ def run_sameseason_forecast(
 
     info = resolve_term_info(target_term)
     target_code = info["target_term_code"]
-    yyyy = int(target_code[:4])
-    qq = target_code[4:]
 
-    prior_codes: List[str] = []
-    k = 1
-    while (yyyy - k) > _FOUN_CURRICULUM_START:
-        prior_codes.append(f"{yyyy - k}{qq}")
-        k += 1
+    prior_codes = _post_rollout_prior_same_season_codes(target_term)
 
     series: DefaultDict[Tuple[str, str], Dict[int, float]] = defaultdict(dict)
     for code in prior_codes:
