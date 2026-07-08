@@ -232,11 +232,15 @@ The tool used to consume an additional **Cognos enrollment-by-major report** to 
    (in the browser)           (downloadable)
 ```
 
-**Two forecasting methods:**
+**Forecasting methods:**
 
-1. **Sequence-based** (primary): Uses SCAD sequencing guides to trace prerequisite enrollment into target FOUN courses. Most accurate for quarters with good sequencing data (Fall, Winter, Spring).
+1. **Auto** (default): Uses same-season historical data when the prior year's same quarter exists, then falls back to the sequence-map method when that history does not exist yet.
 
-2. **Ratio-based** (fallback): When sequencing data is unavailable (e.g., Summer), applies historical enrollment ratios. For example, if Summer enrollment is historically 12% of Spring, it scales accordingly.
+2. **Same-season historical**: Forecasts each course from its own prior same-season enrollment. This is best once the FOUN curriculum has at least one prior instance of that quarter.
+
+3. **Sequence-based**: Uses SCAD sequencing guides to trace prerequisite enrollment into target FOUN courses. This is still useful for first post-rollout seasons such as Spring 2026.
+
+4. **Ratio-based** (fallback): When sequencing data is unavailable, applies historical enrollment ratios. For example, if Summer enrollment is historically 12% of Spring, it scales accordingly.
 
 ---
 
@@ -291,10 +295,11 @@ forecast-tool/
 ### The forecast returns no results
 
 **Possible causes:**
-- The term you requested doesn't have enrollment data in the `Data/` folder
+- Historical mode is selected but the prior year's same quarter is not in the imported Master Schedule
+- Sequence mode is selected but the two feeder quarters are not in the imported Master Schedule
 - The sequencing map doesn't have mappings for that quarter
 
-**Solution:** Check that the relevant CSV files exist in `Data/`. For Summer forecasts, ensure a Spring forecast CSV exists (the ratio method needs it as input).
+**Solution:** Use Auto mode when unsure. If a method-specific error appears, import the missing PZSMSCP term named in the message.
 
 ### "Failed to open database" error from the frontend
 
@@ -322,7 +327,7 @@ A: Yes. The desktop app ships for both macOS and Windows; see "Installing the De
 A: No. The desktop app runs entirely offline once installed; you only need to be online to download the installer or a new version. (The run-from-source path needs internet for first-time dependency setup and updates, but forecasting itself is always offline.)
 
 **Q: How accurate are the forecasts?**
-A: Treat the forecast as a planning floor, not a precise demand estimate. A Spring 2026 backtest against PZSMSCP ACT enrollment counts (the published, near-final demand) showed the model under-forecasts most courses by 20-50% on the Savannah campus and 30-65% on the SCADnow campus. The aggregate forecast captures roughly 70% of measured Savannah demand and 30% of measured SCADnow demand. Several upper-division FOUN courses (250, 251, 260, 330, 331, 360) currently produce no forecast row at all because of a curriculum-year filter assumption that needs revisiting. Full numbers and root-cause analysis are in `docs/SPRING_2026_BACKTEST.md`. The sequence-based method is still the most reliable approach available because it directly traces enrolled students to next-term courses, but plan with the under-forecast bias in mind: use ACT or MAX history for the same course as a sanity-check ceiling against any forecast.
+A: Treat the forecast as a planning estimate, not a guarantee. Auto mode now uses course-level same-season history when available and sequence-map routing when history is not available. The app also includes a backtest endpoint (`POST /api/backtest`) for comparing a forecast against later PZSMSCP ACT/MAX/waitlist ground truth. For Spring 2026, existing calibration docs show that the sequence-map method is directionally useful but misallocates demand by course and campus; use the Planning Metric selector (ACT, MAX, or ACT + waitlist) and backtests to choose the right planning target.
 
 **Q: Can I forecast more than one term ahead?**
 A: The tool forecasts one term at a time. For multi-term planning, run forecasts sequentially (e.g., forecast Spring first, then use that to forecast Summer).

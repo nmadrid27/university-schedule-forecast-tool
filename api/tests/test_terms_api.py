@@ -24,6 +24,8 @@ def test_terms_response_has_required_keys():
     body = client.get("/api/terms").json()
     assert "available_terms" in body
     assert "forecastable_terms" in body
+    assert "forecastable_by_method" in body
+    assert set(body["forecastable_by_method"]).issuperset({"auto", "historical", "sequence"})
 
 
 def test_terms_each_item_has_term_code_and_label():

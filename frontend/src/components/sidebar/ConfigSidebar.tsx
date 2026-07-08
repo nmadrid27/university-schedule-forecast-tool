@@ -3,7 +3,7 @@
 import { useRef, type ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { ForecastConfig } from '@/lib/types';
+import type { DemandMetric, ForecastConfig, ForecastMethod, TermOption } from '@/lib/types';
 import { api } from '@/lib/api';
 import { LLMSettings } from './LLMSettings';
 
@@ -14,12 +14,25 @@ interface ConfigSidebarProps {
     isRunning?: boolean;
     onToggleCollapse?: () => void;
     isCollapsed?: boolean;
+    termsByMethod?: Partial<Record<ForecastMethod, TermOption[]>>;
 }
 
-const TERM_OPTIONS = [
+const TERM_OPTIONS: TermOption[] = [
     'Fall 2025', 'Winter 2026', 'Spring 2026', 'Summer 2026',
     'Fall 2026', 'Winter 2027', 'Spring 2027', 'Summer 2027',
-];
+].map((label) => ({ termCode: label, label }));
+
+const METHOD_LABELS: Record<ForecastMethod, string> = {
+    auto: 'Auto (recommended)',
+    historical: 'Same-season historical',
+    sequence: 'Sequence map',
+};
+
+const DEMAND_LABELS: Record<DemandMetric, string> = {
+    actual: 'Actual enrollment',
+    max: 'Scheduled seats / max enrollment',
+    actual_plus_waitlist: 'Actual + waitlist',
+};
 
 const DEFAULT_CONFIG: ForecastConfig = {
     capacity: 20,
@@ -27,6 +40,8 @@ const DEFAULT_CONFIG: ForecastConfig = {
     bufferPercent: 10,
     quartersToForecast: 2,
     term: 'Spring 2026',
+    method: 'auto',
+    demandMetric: 'actual',
 };
 
 export function ConfigSidebar({
@@ -36,10 +51,17 @@ export function ConfigSidebar({
     isRunning = false,
     onToggleCollapse,
     isCollapsed = false,
+    termsByMethod = {},
 }: ConfigSidebarProps) {
     const handleReset = () => {
         onConfigChange?.(DEFAULT_CONFIG);
     };
+
+    const method = config.method ?? 'auto';
+    const optionsForMethod = termsByMethod[method] ?? termsByMethod.auto ?? TERM_OPTIONS;
+    const termOptions = optionsForMethod.some((t) => t.label === config.term)
+        ? optionsForMethod
+        : [{ termCode: config.term, label: config.term }, ...optionsForMethod];
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const importKindRef = useRef<'master' | 'admits'>('master');
@@ -123,20 +145,53 @@ export function ConfigSidebar({
 
                 {/* Forecast Horizon */}
                 <ConfigSection title="Forecast Horizon">
-                    <label htmlFor="config-term" className="sr-only">Select forecast term</label>
+                    <label htmlFor="config-method" className="text-xs text-muted-foreground mb-1 block">
+                        Forecast Method
+                    </label>
+                    <select
+                        id="config-method"
+                        value={method}
+                        onChange={(e) => onConfigChange?.({ method: e.target.value as ForecastMethod })}
+                        className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+                    >
+                        {(Object.keys(METHOD_LABELS) as ForecastMethod[]).map((key) => (
+                            <option key={key} value={key}>{METHOD_LABELS[key]}</option>
+                        ))}
+                    </select>
+
+                    <label htmlFor="config-term" className="text-xs text-muted-foreground mb-1 mt-3 block">
+                        Forecast Term
+                    </label>
                     <select
                         id="config-term"
                         value={config.term}
                         onChange={(e) => onConfigChange?.({ term: e.target.value })}
                         className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
                     >
-                        {TERM_OPTIONS.map((t) => (
-                            <option key={t} value={t}>{t}</option>
+                        {termOptions.map((t) => (
+                            <option key={`${t.termCode}-${t.label}`} value={t.label}>{t.label}</option>
                         ))}
                     </select>
+
+                    <label htmlFor="config-demand" className="text-xs text-muted-foreground mb-1 mt-3 block">
+                        Planning Metric
+                    </label>
+                    <select
+                        id="config-demand"
+                        value={config.demandMetric ?? 'actual'}
+                        onChange={(e) => onConfigChange?.({ demandMetric: e.target.value as DemandMetric })}
+                        className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+                    >
+                        {(Object.keys(DEMAND_LABELS) as DemandMetric[]).map((key) => (
+                            <option key={key} value={key}>{DEMAND_LABELS[key]}</option>
+                        ))}
+                    </select>
+                    <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+                        Auto uses same-season history when available, then falls back to the sequence map.
+                    </p>
                     <Button
                         type="button"
-                        className="mt-2 w-full"
+                        className="mt-3 w-full"
                         onClick={onRunForecast}
                         disabled={isRunning}
                     >
@@ -163,7 +218,7 @@ export function ConfigSidebar({
                         </div>
                         <div>
                             <label htmlFor="config-progression" className="text-xs text-muted-foreground mb-1 block">
-                                Progression Rate
+                                Progression Rate <span className="text-muted-foreground/70">(sequence only)</span>
                             </label>
                             <div className="flex items-center gap-2">
                                 <input
@@ -200,8 +255,9 @@ export function ConfigSidebar({
 
                 {/* Model Info */}
                 <ConfigSection title="Model">
-                    <div className="text-sm text-muted-foreground">
-                        Sequence-based v2.1
+                    <div className="text-sm text-muted-foreground space-y-1">
+                        <p>{METHOD_LABELS[method]}</p>
+                        <p className="text-xs">Metric: {DEMAND_LABELS[config.demandMetric ?? 'actual']}</p>
                     </div>
                 </ConfigSection>
 

@@ -82,7 +82,7 @@ Multi-file FastAPI backend. Main server in `api/main.py` (~900 lines). CORS conf
 |----------|---------|
 | `GET /api/health` | Health check |
 | `POST /api/chat` | LLM-powered parse (with regex fallback) — accepts `{message, history[], term}` |
-| `POST /api/forecast` | Run sequence-based forecast (ratio fallback) with auto-applied adjustments |
+| `POST /api/forecast` | Run auto/historical/sequence forecast with auto-applied adjustments |
 | `GET /api/terms` | Available + forecastable terms from Master Schedule |
 | `GET/PUT /api/config` | Read/write `forecast_config.json` |
 | `GET /api/data/files` | List CSVs in `Data/` |
@@ -102,7 +102,8 @@ Supporting modules:
 ### Forecasting Engine (`api/forecaster.py`)
 
 Pure functions — no argparse, no sys.exit. Entry points:
-- `run_sequence_forecast()` — primary method
+- `run_sameseason_forecast()` — same-season historical method
+- `run_sequence_forecast()` — sequence-map method
 - `run_ratio_forecast()` — fallback for terms without sequencing data (e.g., Summer)
 - `resolve_term_info()` — parses "Spring 2026" into term codes + feeder terms
 - `load_previous_forecast()` — reads existing CSVs for change delta comparison
@@ -117,11 +118,17 @@ Format: `YYYYQQ` where QQ is `10`=Fall, `20`=Winter, `30`=Spring, `40`=Summer.
 
 **Critical**: Fall uses `calendar_year + 1` for the academic year. Fall 2025 → term code `202610`. All other quarters: academic year = calendar year.
 
-### Historical Same-Season Forecasting (Default)
+### Forecast Method Selection (Default = Auto)
 
-`/api/forecast` defaults to the historical same-season method (`run_sameseason_forecast` in `api/forecaster.py`). Each FOUN course is projected from its own prior same-season enrollment, using post-rollout terms only (academic-year code > `_FOUN_CURRICULUM_START`). With 2+ same-season years it fits the season-aware OLS trend; with one year it falls back to last year's same term (level). This method is independent of the sequencing map and immune to sequencing-guide changes.
+`/api/forecast` defaults to `method: "auto"`. Auto tries the same-season historical method first and falls back to the sequence-map method when no post-rollout same-season history exists (e.g. Spring 2026). Users can force `method: "historical"` or `method: "sequence"`.
 
-- Method selection: the request `method` field (`"historical"` or `"sequence"`), then the config key `"method"`, default `"historical"`. The sequence-map engine remains available via `method: "sequence"`.
+- Request-level `method` is optional (`"auto" | "historical" | "sequence"`). If omitted, the config key `"method"` is used; if absent, default is `"auto"`.
+- `demandMetric` supports `"actual"`, `"max"`, and `"actual_plus_waitlist"`; the loader applies this to both CSV and xlsx Master Schedule exports.
+- `/api/terms` returns `forecastable_by_method` so the UI can offer terms that are valid for the selected method.
+
+### Historical Same-Season Forecasting
+
+`run_sameseason_forecast` projects each FOUN course from its own prior same-season enrollment, using post-rollout terms only (academic-year code > `_FOUN_CURRICULUM_START`). With 2+ same-season years it fits the season-aware OLS trend; with one year it falls back to last year's same term (level). This method is independent of the sequencing map and immune to sequencing-guide changes.
 - Data requirement: the imported Master Schedule must include the **prior year's same quarter** (e.g. Fall 2025 to forecast Fall 2026). A missing same-season term returns a 422 naming the term to import.
 - Brand-new courses with no history are returned flagged (method `"same_season_new_course"`, 0 seats) for a manual estimate.
 
@@ -204,19 +211,20 @@ The end user has **read access to one Cognos report only**: the **PZSMSCP — Fl
 - **Master Schedule (PZSMSCP)** — drop the xlsx export at `Data/Master Schedule of Classes.xlsx`. The loader (`load_term_enrollments` in `api/forecaster.py`) auto-dispatches by file extension and handles the Cognos quirks: 16 rows of metadata before the header, multiple rows per CRN (one per instructor) which the loader dedupes by CRN before summing `ACT ENR`. CSV exports of the same report continue to work.
 - **By-major weighting (DISABLED in production)** — the prior `enrollment_by_major.xlsx` weighting feature requires student-level enrollment-by-major data the end user does not have access to (FERPA / role constraint). `forecast_config.json` ships with `"enrollmentByMajorFile": null`. The loader (`load_enrollment_by_major`) and crosswalk (`_COGNOS_TO_SEQ_PROGRAMS`) are preserved for development / testing and may be re-enabled if/when an aggregated by-major report becomes available.
 - **Admits demand (PZSAAPF-SL31)** — accepted-applicants report. Already wired via `admitsFile`. Loaded by `load_admits_foun_demand`.
-- **Manual adjustments** — per-term `set` adjustments in `Data/adjustments/<term>.json` are reserved for overriding model output against **measured ground truth (ACT enrollment from PZSMSCP)**, not against another forecaster's planning projection. Calibrating to a projection propagates that projection's error and masks model bias; see `Data/adjustments/README.md` for the policy. Directory is gitignored; commit a template into `Data/adjustments/` only as a reference copy. As of 2026-05-05 the Spring 2026 template is empty (prior overrides removed after PZSMSCP backtest — see `docs/SPRING_2026_BACKTEST.md`).
+- **Manual adjustments** — per-term `set` adjustments in `Data/adjustments/<term>.json` are reserved for overriding model output against **measured ground truth (ACT enrollment from PZSMSCP)**, not against another forecaster's planning projection. Calibrating to a projection propagates that projection's error and masks model bias; see `docs/ADJUSTMENTS_POLICY.md` for the policy. Directory is gitignored; commit a template into `Data/adjustments/` only as a reference copy. As of 2026-05-05 the Spring 2026 template is empty (prior overrides removed after PZSMSCP backtest — see `docs/SPRING_2026_BACKTEST.md`).
 - **`Data/clon_sav_atl_seat_projection_202630_20260107.xlsx`** — Jan 2026 SCAD planning **projection**, NOT actual demand. Useful as a "what was originally projected" reference when comparing the model to historical planning numbers. For backtesting accuracy, always use PZSMSCP `ACT ENR` counts as ground truth instead.
 
 ## Current State & Known Gaps
 
 - Test framework in place (pytest + Vitest). Windows installer CI added (`.github/workflows/build-windows.yml`); no test-running CI yet.
-- Backend suite green: **535 passing, 0 failing** (frontend 144). The former 2 ratio-fallback failures were a real production bug, fixed 2026-06-06: a redundant local `resolve_term_info` import in `run_forecast` caused `UnboundLocalError` on the Summer ratio-fallback path (swallowed into a 500, so every Summer forecast failed).
+- Backend suite green: **556 passing, 0 failing** (frontend 145). The former 2 ratio-fallback failures were a real production bug, fixed 2026-06-06: a redundant local `resolve_term_info` import in `run_forecast` caused `UnboundLocalError` on the Summer ratio-fallback path (swallowed into a 500, so every Summer forecast failed).
 - `prophet` and `plotly` removed from `requirements.txt`; `forecast_tool/forecasting/prophet_forecast.py` deleted (Prophet was unused on the production path and blocked Windows installs). The ensemble's `"prophet"` dict keys are retained as labels only.
 - `.venv/` may have broken symlinks after Python upgrades; recreate with `python3 -m venv .venv`
 - `Data/adjustments/` is gitignored — fresh worktrees show raw forecast numbers (no manual `set` overrides applied)
 - Per-term CLI scripts (`forecast_spring26_from_sequence_guides.py`, `forecast_fall26_from_sequence_guides.py`, `forecast_summer26_foun.py`) retired to the gitignored `deprecated/` folder (drifted from `api/forecaster.py`: missing year filter, enrollment weights, legacy crosswalk, ATLANTA, admits demand). Forecast via the desktop app or `POST /api/forecast`.
 - `_COGNOS_TO_SEQ_PROGRAMS` maps 34 of 46 Cognos codes; 12 unmapped codes are now logged via `logging.warning` (was silent). Mapping decisions moot in production (Cognos by-major weighting disabled — see "Data Access Constraints" above).
-- PZSMSCP xlsx loader added to `load_term_enrollments` / `get_available_terms` (auto-dispatch on file extension; dedupes co-taught rows by CRN). End-user input is now exclusively the PZSMSCP Cognos export.
+- PZSMSCP xlsx loader added to `load_term_enrollments` / `get_available_terms` (auto-dispatch on file extension; dedupes co-taught rows by CRN). CSV Master Schedule loading now also dedupes duplicate CRN rows.
+- 2026-07-08 review/fix pass: frontend has method and planning-metric selectors; API config persists `method` and `demand_metric`; `/api/backtest` reports MAE/MAPE/bias/capture against PZSMSCP ground truth; admits snapshots emit low-registration warnings only when the sequence method uses them; anomaly detection now builds campus-aware history from the active Master Schedule instead of the course-only historical loader; `api.main` imports work both package-style and script-style; Next `turbopack.root` is pinned to remove workspace-root warnings.
 
 ## Desktop App Packaging (v1)
 
@@ -225,7 +233,7 @@ Packaged as an offline double-click desktop app for macOS (`.dmg`) and Windows (
 - **`api/paths.py`** resolves writable vs. read-only locations. In dev everything is under the project root (tests unchanged). When frozen, writable state (config, `Data/`, adjustments, outputs, the `settings.json` key store) lives in the OS app-data folder (`~/Library/Application Support/SCAD Forecast Tool/` on macOS, `%APPDATA%\SCAD Forecast Tool\` on Windows), and read-only seed files live in the bundle. `ensure_seeded()` copies bundled seeds (`build/seed/`, `build/seed_config/`) into app-data on first run.
 - **Frontend** builds with `output: 'export'` and `NEXT_PUBLIC_API_URL=''` (same-origin relative calls; `lib/api.ts` uses `??` not `||`). No Node at runtime. The frontend uses **pnpm** (`package-lock.json` removed).
 - **In-app import**: `POST /api/data/import` takes a multipart upload (`kind=master|admits`) driven by hidden `<input type="file">` buttons in `ConfigSidebar` ("Import Master Schedule…" and "Import Admits (optional)…"); master sets `enrollment_source`, admits sets `admitsFile`. The pywebview `js_api` dialog was removed (it did not display on macOS from a worker thread). Requires `python-multipart` (bundled via the spec's `collect_submodules("multipart")`).
-- **No-feeder guardrail**: `/api/forecast` returns a 422 naming the missing prior quarters when the Master Schedule has no feeder-term enrollment (the whole forecast is zero), instead of returning a silent screen of zeros. The forecast for term X needs the Master Schedule to include the two quarters before X (e.g. Fall + Winter to forecast Spring), not X's own actuals. Spring 2026 accuracy root-cause and the actuals-based fix worklist: `docs/SPRING_2026_CALIBRATION.md` (under-forecast is seq-map miscalibration, not a code bug).
+- **No-data guardrails**: `/api/forecast` returns a 422 naming the missing prior same-season term for historical mode, the missing feeder quarters for sequence mode, or both requirements in auto mode. Spring 2026 auto now falls back to the sequence method instead of failing on historical mode. Spring 2026 accuracy root-cause and the actuals-based fix worklist: `docs/SPRING_2026_CALIBRATION.md` (under-forecast is seq-map miscalibration, not a code bug).
 - **Build pipeline**: `build/forecast_tool.spec` (PyInstaller), `build/build_mac.sh` to `.dmg` via dmgbuild, `.github/workflows/build-windows.yml` to `.exe` via Inno Setup (`build/installer.iss`). Desktop toolchain in `requirements-desktop.txt` (pywebview, pyinstaller).
 - **Not in v1**: code signing (Gatekeeper/SmartScreen show a one-time unsigned warning, documented in `docs/HANDOFF_GUIDE.md`), auto-update, bundled local LLM, Intel-Mac build (arm64 only).
 - **Status**: code complete on branch `feat/desktop-packaging` (550 backend / 144 frontend green). The **Windows installer now builds green in CI** (run 27163186485 on `767a039`; artifact `SCAD-Forecast-Tool-Windows`, the `SCAD-Forecast-Tool-Setup.exe`). Two CI fixes were needed: `frontend/.npmrc` sets `node-linker=hoisted` (Turbopack cannot resolve pnpm's symlinked node_modules on the Windows runner) and `build/installer.iss` points at the repo-root `dist/` (where `--distpath dist` writes). A `push: branches: [feat/desktop-packaging]` trigger builds the installer on each push, except docs-only pushes (`paths-ignore: **.md, docs/**`); `v*` tags always build, since GitHub does not apply path filters to tag pushes. CI actions run on Node 24 (checkout v6, setup-node v6, setup-python v6, pnpm/action-setup v6, upload-artifact v7); both `ci.yml` and `build-windows.yml` are green on `d2f5384`. The Mac `.dmg` build and the GUI smoke test on real Mac and Windows machines still need to run. Design and plan: `docs/superpowers/specs/2026-06-06-desktop-packaging-design.md`, `docs/superpowers/plans/2026-06-06-desktop-packaging.md`.

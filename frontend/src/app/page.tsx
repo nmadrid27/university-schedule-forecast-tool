@@ -6,7 +6,7 @@ import { ResultsPanel } from '@/components/results';
 import { HistorySidebar, ConfigSidebar } from '@/components/sidebar';
 import { useChat } from '@/hooks/useChat';
 import { useAdjustments } from '@/hooks/useAdjustments';
-import { ForecastConfig } from '@/lib/types';
+import type { ForecastConfig, ForecastMethod, TermOption } from '@/lib/types';
 import { api } from '@/lib/api';
 
 export default function Home() {
@@ -16,7 +16,10 @@ export default function Home() {
     bufferPercent: 10,
     quartersToForecast: 2,
     term: 'Spring 2026',
+    method: 'auto',
+    demandMetric: 'actual',
   });
+  const [termsByMethod, setTermsByMethod] = useState<Partial<Record<ForecastMethod, TermOption[]>>>({});
 
   const { messages, isLoading, sendMessage, runForecast, clearMessages, forecastResults, forecastSummary, lastAdjustmentChange } = useChat(config);
   const { adjustments, toggleAdjustment, removeAdjustment, loadAdjustments } = useAdjustments(config.term);
@@ -35,6 +38,9 @@ export default function Home() {
           progressionRate: diskConfig.progressionRate,
           bufferPercent: diskConfig.bufferPercent,
           quartersToForecast: diskConfig.quartersToForecast,
+          term: diskConfig.defaultTerm || prev.term,
+          method: diskConfig.method || prev.method,
+          demandMetric: diskConfig.demandMetric || prev.demandMetric,
         }));
       })
       .catch(() => {
@@ -42,6 +48,13 @@ export default function Home() {
       })
       .finally(() => {
         initialLoadDone.current = true;
+      });
+    api.getTerms()
+      .then((terms) => {
+        setTermsByMethod(terms.forecastable_by_method ?? { auto: terms.forecastable_terms });
+      })
+      .catch(() => {
+        // Backend not running — keep static term options in the sidebar
       });
   }, []);
 
@@ -56,12 +69,14 @@ export default function Home() {
         bufferPercent: config.bufferPercent,
         quartersToForecast: config.quartersToForecast,
         defaultTerm: config.term,
+        method: config.method,
+        demandMetric: config.demandMetric,
       }).catch(() => {});
     }, 500);
     return () => {
       if (configSaveTimer.current) clearTimeout(configSaveTimer.current);
     };
-  }, [config.capacity, config.progressionRate, config.bufferPercent, config.quartersToForecast, config.term]);
+  }, [config.capacity, config.progressionRate, config.bufferPercent, config.quartersToForecast, config.term, config.method, config.demandMetric]);
 
   // Reload adjustments when LLM extracts new ones via chat
   useEffect(() => {
@@ -140,6 +155,7 @@ export default function Home() {
         isRunning={isLoading}
         onToggleCollapse={() => setShowConfig((prev) => !prev)}
         isCollapsed={!showConfig}
+        termsByMethod={termsByMethod}
       />
     </div>
   );

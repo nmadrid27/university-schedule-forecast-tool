@@ -1,5 +1,7 @@
 // API client for communicating with the FastAPI backend
 
+import type { DemandMetric, ForecastMethod } from '@/lib/types';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 export interface ChatRequest {
@@ -11,11 +13,14 @@ export interface ChatRequest {
 
 export interface ForecastRequest {
     term: string;
-    method?: 'historical' | 'sequence';
+    method?: ForecastMethod;
+    demandMetric?: DemandMetric;
     config?: {
         capacity?: number;
         progressionRate?: number;
         bufferPercent?: number;
+        method?: ForecastMethod;
+        demandMetric?: DemandMetric;
     };
 }
 
@@ -76,6 +81,7 @@ class ApiClient {
                 change?: number;
                 changePercent?: number;
                 adjusted?: boolean;
+                anomalyFlag?: Record<string, unknown> | null;
             }>;
             summary: {
                 totalStudents: number;
@@ -83,8 +89,32 @@ class ApiClient {
                 coursesForecasted: number;
                 method: string;
                 adjustmentsApplied?: number;
+                demandMetric?: DemandMetric;
+                warnings?: string[] | null;
             };
         }>('/api/forecast', {
+            method: 'POST',
+            body: JSON.stringify(request),
+        });
+    }
+
+    async runBacktest(request: ForecastRequest) {
+        return this.request<{
+            term: string;
+            method: string;
+            demandMetric: DemandMetric;
+            metrics: Record<string, number | null>;
+            byCampus: Record<string, Record<string, number | null>>;
+            rows: Array<{
+                course: string;
+                campus: string;
+                actual: number;
+                forecast: number;
+                error: number;
+                absError: number;
+                pctError?: number | null;
+            }>;
+        }>('/api/backtest', {
             method: 'POST',
             body: JSON.stringify(request),
         });
@@ -128,6 +158,9 @@ class ApiClient {
             progressionRate: number;
             bufferPercent: number;
             quartersToForecast: number;
+            defaultTerm: string;
+            method: ForecastMethod;
+            demandMetric: DemandMetric;
         }>('/api/config', {
             method: 'GET',
         });
@@ -140,6 +173,8 @@ class ApiClient {
         bufferPercent: number;
         quartersToForecast: number;
         defaultTerm: string;
+        method: ForecastMethod;
+        demandMetric: DemandMetric;
     }>) {
         return this.request<{ success: boolean }>('/api/config', {
             method: 'PUT',
@@ -152,6 +187,7 @@ class ApiClient {
         return this.request<{
             available_terms: Array<{ termCode: string; label: string }>;
             forecastable_terms: Array<{ termCode: string; label: string }>;
+            forecastable_by_method?: Record<ForecastMethod, Array<{ termCode: string; label: string }>>;
         }>('/api/terms', {
             method: 'GET',
         });

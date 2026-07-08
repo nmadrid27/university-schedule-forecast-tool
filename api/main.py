@@ -15,8 +15,13 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal, Tuple
 from datetime import datetime
 
-# Ensure forecast_tool package is importable from the api/ directory
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Ensure both package-style imports (api.main) and script-style imports
+# (python api/main.py, desktop/app.py importing bare main) resolve reliably.
+API_DIR = Path(__file__).resolve().parent
+SOURCE_ROOT = API_DIR.parent
+for _p in (str(API_DIR), str(SOURCE_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from forecaster import (
     run_sequence_forecast,
@@ -26,6 +31,10 @@ from forecaster import (
     get_available_terms,
     term_code_to_label,
     resolve_term_info,
+    load_crosswalk,
+    load_term_enrollments,
+    analyze_admits_registration,
+    normalize_demand_metric,
     _post_rollout_prior_same_season_codes,
 )
 from adjustments import (
@@ -189,7 +198,8 @@ class ChatResponse(BaseModel):
 
 class ForecastRequest(BaseModel):
     term: str
-    method: Optional[str] = "historical"
+    method: Optional[Literal["auto", "historical", "sequence"]] = None
+    demandMetric: Optional[Literal["actual", "max", "actual_plus_waitlist"]] = None
     config: Optional[Dict[str, Any]] = None
     # Scenario percentages: e.g. [{"label": "conservative", "pct": -9},
     #                               {"label": "optimistic",  "pct": -5}]
@@ -218,6 +228,8 @@ class ForecastSummary(BaseModel):
     coursesForecasted: int
     method: str
     adjustmentsApplied: Optional[int] = None
+    demandMetric: Optional[str] = None
+    warnings: Optional[List[str]] = None
 
 class ForecastResponse(BaseModel):
     results: List[ForecastResult]
@@ -230,6 +242,7 @@ class TermOption(BaseModel):
 class TermsResponse(BaseModel):
     available_terms: List[TermOption]
     forecastable_terms: List[TermOption]
+    forecastable_by_method: Optional[Dict[str, List[TermOption]]] = None
 
 class ConfigModel(BaseModel):
     capacity: int = Field(default=20, ge=1, le=100)
@@ -237,6 +250,8 @@ class ConfigModel(BaseModel):
     bufferPercent: float = Field(default=10.0, ge=0.0, le=100.0)
     quartersToForecast: int = Field(default=2, ge=1, le=8)
     defaultTerm: str = "Spring 2026"
+    method: Literal["auto", "historical", "sequence"] = "auto"
+    demandMetric: Literal["actual", "max", "actual_plus_waitlist"] = "actual"
     admitsFile: Optional[str] = None
     enrollmentByMajorFile: Optional[str] = None
 
@@ -423,6 +438,12 @@ def run_forecast(request: ForecastRequest):
         capacity = int(req_cfg.get("capacity", disk_cfg.get("capacity", 20)))
         progression_rate = float(req_cfg.get("progressionRate", req_cfg.get("progression_rate", disk_cfg.get("progression_rate", 0.95))))
         buffer_percent = float(req_cfg.get("bufferPercent", req_cfg.get("buffer_percent", disk_cfg.get("buffer_percent", 10.0))))
+        demand_metric = normalize_demand_metric(
+            request.demandMetric
+            or req_cfg.get("demandMetric")
+            or req_cfg.get("demand_metric")
+            or disk_cfg.get("demand_metric", "actual")
+        )
 
         # Use the requested term, falling back to config default
         target_term = request.term or disk_cfg.get("default_term", "Spring 2026")
@@ -460,12 +481,18 @@ def run_forecast(request: ForecastRequest):
         admits_path = resolve_optional("admitsFile")
         enrollment_by_major_path = resolve_optional("enrollmentByMajorFile")
 
-        # Run the real forecast. The historical same-season method is the
-        # default; the sequence engine (with ratio fallback) is opt-in.
-        method = (request.method or disk_cfg.get("method") or "historical").lower()
+        # Run the real forecast. "auto" tries the historical same-season model
+        # first and falls back to the sequence-map model when same-season history
+        # does not exist yet (e.g. Spring 2026, the first post-rollout Spring).
+        method = (request.method or req_cfg.get("method") or disk_cfg.get("method") or "auto").lower()
+        if method not in {"auto", "historical", "sequence"}:
+            method = "auto"
 
-        if method == "sequence":
-            rows = run_sequence_forecast(
+        def _has_signal(candidate_rows: List[Dict]) -> bool:
+            return bool(candidate_rows) and sum((r.get("projected_seats") or 0) for r in candidate_rows) > 0
+
+        def _run_sequence() -> Tuple[List[Dict], str]:
+            seq_rows = run_sequence_forecast(
                 sequence_map_path=sequence_map_path,
                 enrollment_source_path=enrollment_source_path,
                 target_term=target_term,
@@ -474,12 +501,13 @@ def run_forecast(request: ForecastRequest):
                 buffer_percent=buffer_percent,
                 admits_path=admits_path,
                 enrollment_by_major_path=enrollment_by_major_path,
+                demand_metric=demand_metric,
             )
-            method_label = "Sequence-based"
+            seq_label = "Sequence-based"
             # Fallback: if sequence-based returned no results (e.g. Summer has
             # no sequencing data), try the ratio-based method using the closest
             # feeder quarter's existing forecast output.
-            if not rows:
+            if not seq_rows:
                 info = resolve_term_info(target_term)
                 feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
                 feeder_tc = info["closer_feeder"]["term_code"]
@@ -493,24 +521,33 @@ def run_forecast(request: ForecastRequest):
                                  if "Sequence_Guides" in p.name or "sequence_guides" in p.name]
                     candidates = preferred + [p for p in reversed(feeder_csvs) if p not in preferred]
                     for csv_path in candidates:
-                        rows = run_ratio_forecast(
+                        seq_rows = run_ratio_forecast(
                             feeder_forecast_path=csv_path,
                             historical_data_path=historical_path,
                             target_term=target_term,
                             capacity=capacity,
                             buffer_percent=buffer_percent,
                         )
-                        if rows:
-                            method_label = "Ratio-based"
+                        if seq_rows:
+                            seq_label = "Ratio-based"
                             break
+            return seq_rows, seq_label
+
+        if method == "sequence":
+            rows, method_label = _run_sequence()
         else:
             rows = run_sameseason_forecast(
                 master_schedule_path=enrollment_source_path,
                 target_term=target_term,
                 capacity=capacity,
                 buffer_percent=buffer_percent,
+                demand_metric=demand_metric,
             )
             method_label = "Same-season historical"
+            if method == "auto" and not _has_signal(rows):
+                rows, method_label = _run_sequence()
+                if _has_signal(rows):
+                    method_label = f"Auto ({method_label})"
 
         # Apply output-level adjustments to rows
         if active_adjustments and rows:
@@ -520,14 +557,22 @@ def run_forecast(request: ForecastRequest):
         # data this method needs. Explain it instead of returning zeros.
         no_data = (not rows) or sum((r.get("projected_seats") or 0) for r in rows) == 0
         if no_data:
+            _g = resolve_term_info(target_term)
+            _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
+            _farther = term_code_to_label(_g.get("farther_feeder", {}).get("term_code", ""))
             if method == "sequence":
-                _g = resolve_term_info(target_term)
-                _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
-                _farther = term_code_to_label(_g.get("farther_feeder", {}).get("term_code", ""))
                 _detail = (
                     f"No feeder enrollment found to forecast {target_term}. The imported "
                     f"Master Schedule must include the prior quarters ({_farther} and "
                     f"{_closer}). Import the PZSMSCP export covering those terms."
+                )
+            elif method == "auto":
+                _priors = _post_rollout_prior_same_season_codes(target_term)
+                _hist_need = term_code_to_label(_priors[0]) if _priors else "a prior post-rollout same-season term"
+                _detail = (
+                    f"No forecast data found for {target_term}. Auto mode needs either "
+                    f"same-season history ({_hist_need}) or sequence feeder terms "
+                    f"({_farther} and {_closer}) in the imported Master Schedule."
                 )
             else:
                 _priors = _post_rollout_prior_same_season_codes(target_term)
@@ -556,21 +601,24 @@ def run_forecast(request: ForecastRequest):
         if term_matches:
             previous = load_previous_forecast(term_matches[-1])
 
-        # Build OLS historical series for anomaly detection (best-effort)
+        # Build OLS historical series for anomaly detection (best-effort).
+        # Use the active Master Schedule loader so campus labels and demand
+        # metrics match the forecast path. The older FOUN_Historical loader is
+        # course-only and cannot key anomalies by campus.
         _ols_historical: Dict[Tuple[str, str], Dict[str, int]] = {}
         try:
             from forecast_tool.forecasting.ols_forecast import detect_anomaly
-            from forecast_tool.data.loaders import load_historical_data
-            _df_hist = load_historical_data(data_dir=str(DATA_DIR))
-            if not _df_hist.empty:
-                _foun_hist = _df_hist[_df_hist["course_code"].str.startswith("FOUN ")]
-                for (_course, _campus), _grp in _foun_hist.groupby(["course_code", "campus"]):
-                    _hist_map = {}
-                    for _, _r in _grp.iterrows():
-                        _qtr_lookup = {"Fall": "10", "Winter": "20", "Spring": "30", "Summer": "40"}
-                        _tc = f"{_r['year']}{_qtr_lookup.get(_r['quarter'], '00')}"
-                        _hist_map[_tc] = int(_r["enrollment"])
-                    _ols_historical[(_course, _campus)] = _hist_map
+            _crosswalk = load_crosswalk(enrollment_source_path.parent / "sequence_crosswalk_template.csv")
+            _campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
+            for _tc in get_available_terms(enrollment_source_path):
+                for (_campus, _course), _seats in load_term_enrollments(
+                    enrollment_source_path,
+                    _tc,
+                    crosswalk=_crosswalk,
+                    demand_metric=demand_metric,
+                ).items():
+                    if str(_course).startswith("FOUN"):
+                        _ols_historical.setdefault((_course, _campus_label.get(_campus, _campus)), {})[_tc] = int(_seats)
         except Exception:
             pass
 
@@ -641,6 +689,9 @@ def run_forecast(request: ForecastRequest):
         total_students = sum(r.projectedSeats for r in results)
         total_sections = sum(r.sections for r in results)
         adj_count = len(active_adjustments) if active_adjustments else 0
+        warnings: List[str] = []
+        if admits_path and "Sequence" in method_label:
+            warnings.extend(analyze_admits_registration(admits_path).get("warnings", []))
 
         return ForecastResponse(
             results=results,
@@ -650,6 +701,8 @@ def run_forecast(request: ForecastRequest):
                 coursesForecasted=len(set(r.course for r in results)),
                 method=method_label,
                 adjustmentsApplied=adj_count if adj_count > 0 else None,
+                demandMetric=demand_metric,
+                warnings=warnings or None,
             ),
         )
     except HTTPException:
@@ -774,75 +827,69 @@ def list_terms():
             label = term_code_to_label(tc)
             available.append(TermOption(termCode=tc, label=label))
 
-        # A term is forecastable if both feeder term codes exist in the data
-        forecastable = []
-        for tc in term_codes:
-            label = term_code_to_label(tc)
-            try:
-                info = resolve_term_info(label)
-                closer_tc = info["closer_feeder"]["term_code"]
-                farther_tc = info["farther_feeder"]["term_code"]
-                if closer_tc in term_code_set and farther_tc in term_code_set:
-                    forecastable.append(TermOption(termCode=tc, label=label))
-            except (ValueError, KeyError):
-                continue
-
-        # Also check terms one step beyond available data
-        # (i.e. terms whose feeders are the latest available terms)
-        # Generate candidate next terms
+        candidates = set(term_codes)
         if term_codes:
             max_code = max(term_codes)
             max_acad = int(max_code[:4])
-            for acad_year in [max_acad, max_acad + 1]:
+            # Include near-future terms so the scheduler can forecast beyond the
+            # last imported term when the needed feeder/history terms exist.
+            for acad_year in range(max_acad, max_acad + 3):
                 for qq in ["10", "20", "30", "40"]:
-                    candidate = str(acad_year) + qq
-                    if candidate in term_code_set:
-                        continue
-                    label = term_code_to_label(candidate)
-                    try:
-                        info = resolve_term_info(label)
-                        closer_tc = info["closer_feeder"]["term_code"]
-                        farther_tc = info["farther_feeder"]["term_code"]
-                        if closer_tc in term_code_set and farther_tc in term_code_set:
-                            forecastable.append(TermOption(termCode=candidate, label=label))
-                    except (ValueError, KeyError):
-                        continue
+                    candidates.add(f"{acad_year}{qq}")
 
-        # Also check terms forecastable via the ratio method: if a forecast
-        # CSV exists for the closer feeder quarter, the target is forecastable.
-        forecastable_codes = {t.termCode for t in forecastable}
-        quarter_labels = {"10": "Fall", "20": "Winter", "30": "Spring", "40": "Summer"}
-        for qq_target, qq_label in quarter_labels.items():
-            for acad_year in [max_acad, max_acad + 1] if term_codes else []:
-                candidate = str(acad_year) + qq_target
-                if candidate in forecastable_codes:
-                    continue
-                label = term_code_to_label(candidate)
-                try:
-                    info = resolve_term_info(label)
-                except (ValueError, KeyError):
-                    continue
-                feeder_q = info["closer_feeder"]["quarter"].capitalize()
-                feeder_tc = info["closer_feeder"]["term_code"]
-                feeder_label = term_code_to_label(feeder_tc)
-                feeder_parts = feeder_label.split()
-                feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else feeder_tc[:4]
-                pattern = f"{feeder_q}_{feeder_year}_FOUN_Forecast*.csv"
-                if list(DATA_DIR.glob(pattern)):
-                    forecastable.append(TermOption(termCode=candidate, label=label))
+        by_method: Dict[str, List[TermOption]] = {
+            "historical": [],
+            "sequence": [],
+            "auto": [],
+        }
 
-        # Deduplicate and sort forecastable
-        seen = set()
-        deduped = []
-        for t in forecastable:
-            if t.termCode not in seen:
-                seen.add(t.termCode)
-                deduped.append(t)
-        deduped.sort(key=lambda x: x.termCode)
+        def _dedupe_sort(items: List[TermOption]) -> List[TermOption]:
+            seen = set()
+            out = []
+            for item in items:
+                if item.termCode not in seen:
+                    seen.add(item.termCode)
+                    out.append(item)
+            out.sort(key=lambda x: x.termCode)
+            return out
+
+        def _sequence_has_ratio_fallback(info: Dict) -> bool:
+            feeder_q = info["closer_feeder"]["quarter"].capitalize()
+            feeder_tc = info["closer_feeder"]["term_code"]
+            feeder_label = term_code_to_label(feeder_tc)
+            feeder_parts = feeder_label.split()
+            feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else feeder_tc[:4]
+            pattern = f"{feeder_q}_{feeder_year}_FOUN_Forecast*.csv"
+            return bool(list(DATA_DIR.glob(pattern)))
+
+        for candidate in candidates:
+            label = term_code_to_label(candidate)
+            try:
+                info = resolve_term_info(label)
+            except (ValueError, KeyError):
+                continue
+
+            option = TermOption(termCode=candidate, label=label)
+            priors = _post_rollout_prior_same_season_codes(label)
+            historical_ok = bool(priors and priors[0] in term_code_set)
+
+            closer_tc = info["closer_feeder"]["term_code"]
+            farther_tc = info["farther_feeder"]["term_code"]
+            sequence_ok = (closer_tc in term_code_set and farther_tc in term_code_set) or _sequence_has_ratio_fallback(info)
+
+            if historical_ok:
+                by_method["historical"].append(option)
+            if sequence_ok:
+                by_method["sequence"].append(option)
+            if historical_ok or sequence_ok:
+                by_method["auto"].append(option)
+
+        by_method = {key: _dedupe_sort(value) for key, value in by_method.items()}
 
         return TermsResponse(
             available_terms=available,
-            forecastable_terms=deduped,
+            forecastable_terms=by_method["auto"],
+            forecastable_by_method=by_method,
         )
     except HTTPException:
         raise
@@ -860,6 +907,10 @@ def get_config():
         bufferPercent=float(disk_cfg.get("buffer_percent", 10.0)),
         quartersToForecast=int(disk_cfg.get("quarters_to_forecast", 2)),
         defaultTerm=disk_cfg.get("default_term", "Spring 2026"),
+        method=disk_cfg.get("method", "auto") if disk_cfg.get("method") in {"auto", "historical", "sequence"} else "auto",
+        demandMetric=normalize_demand_metric(disk_cfg.get("demand_metric", "actual")),
+        admitsFile=disk_cfg.get("admitsFile"),
+        enrollmentByMajorFile=disk_cfg.get("enrollmentByMajorFile"),
     )
 
 
@@ -872,6 +923,8 @@ def update_config(config: ConfigModel):
     disk_cfg["buffer_percent"] = config.bufferPercent
     disk_cfg["quarters_to_forecast"] = config.quartersToForecast
     disk_cfg["default_term"] = config.defaultTerm
+    disk_cfg["method"] = config.method
+    disk_cfg["demand_metric"] = config.demandMetric
     _write_disk_config(disk_cfg)
     return {"success": True, "config": config}
 
@@ -934,6 +987,129 @@ async def import_data_file(file: UploadFile = File(...), kind: str = Form("maste
     _write_disk_config(cfg)
 
     return {"success": True, "stored_as": dest.name, "kind": kind, "data_dir": str(DATA_DIR)}
+
+
+# ============== Backtest / Calibration Routes ==============
+
+class BacktestRequest(BaseModel):
+    term: str
+    method: Optional[Literal["auto", "historical", "sequence"]] = "auto"
+    demandMetric: Optional[Literal["actual", "max", "actual_plus_waitlist"]] = "actual"
+    config: Optional[Dict[str, Any]] = None
+
+
+class BacktestRow(BaseModel):
+    course: str
+    campus: str
+    actual: float
+    forecast: float
+    error: float
+    absError: float
+    pctError: Optional[float] = None
+
+
+class BacktestMetrics(BaseModel):
+    mae: float
+    mape: Optional[float] = None
+    bias: float
+    captureRate: Optional[float] = None
+    actualTotal: float
+    forecastTotal: float
+    comparedRows: int
+
+
+class BacktestResponse(BaseModel):
+    term: str
+    method: str
+    demandMetric: str
+    metrics: BacktestMetrics
+    byCampus: Dict[str, BacktestMetrics]
+    rows: List[BacktestRow]
+
+
+@app.post("/api/backtest", response_model=BacktestResponse)
+def run_backtest(request: BacktestRequest):
+    """Compare a forecast for a term against actual Master Schedule enrollment.
+
+    This is intended for calibration: it reports MAE/MAPE/bias/capture by
+    course and campus using PZSMSCP ACT/MAX/waitlist data as ground truth.
+    """
+    try:
+        forecast = run_forecast(ForecastRequest(
+            term=request.term,
+            method=request.method,
+            demandMetric=request.demandMetric,
+            config=request.config,
+        ))
+
+        disk_cfg = _read_disk_config()
+        raw = disk_cfg.get("enrollment_source", "Data/Master Schedule of Classes.csv")
+        source = Path(raw)
+        master_path = source if source.is_absolute() else PROJECT_ROOT / source
+        info = resolve_term_info(request.term)
+        demand_metric = normalize_demand_metric(request.demandMetric or disk_cfg.get("demand_metric", "actual"))
+        crosswalk = load_crosswalk(master_path.parent / "sequence_crosswalk_template.csv")
+        campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
+
+        actual = {
+            (course, campus_label.get(campus, campus)): seats
+            for (campus, course), seats in load_term_enrollments(
+                master_path,
+                info["target_term_code"],
+                crosswalk=crosswalk,
+                demand_metric=demand_metric,
+            ).items()
+        }
+        forecast_map = {(r.course, r.campus): r.projectedSeats for r in forecast.results}
+        keys = sorted(set(actual.keys()) | set(forecast_map.keys()))
+        rows: List[BacktestRow] = []
+        for course, campus in keys:
+            actual_val = float(actual.get((course, campus), 0.0))
+            forecast_val = float(forecast_map.get((course, campus), 0.0))
+            error = forecast_val - actual_val
+            pct = round((error / actual_val) * 100, 1) if actual_val > 0 else None
+            rows.append(BacktestRow(
+                course=course,
+                campus=campus,
+                actual=actual_val,
+                forecast=forecast_val,
+                error=error,
+                absError=abs(error),
+                pctError=pct,
+            ))
+
+        def _metrics(items: List[BacktestRow]) -> BacktestMetrics:
+            actual_total = sum(r.actual for r in items)
+            forecast_total = sum(r.forecast for r in items)
+            compared = [r for r in items if r.actual > 0 or r.forecast > 0]
+            mae = sum(r.absError for r in compared) / len(compared) if compared else 0.0
+            pct_rows = [abs(r.error / r.actual) * 100 for r in compared if r.actual > 0]
+            mape = sum(pct_rows) / len(pct_rows) if pct_rows else None
+            bias = forecast_total - actual_total
+            capture = (forecast_total / actual_total) if actual_total > 0 else None
+            return BacktestMetrics(
+                mae=round(mae, 2),
+                mape=round(mape, 2) if mape is not None else None,
+                bias=round(bias, 2),
+                captureRate=round(capture, 3) if capture is not None else None,
+                actualTotal=round(actual_total, 2),
+                forecastTotal=round(forecast_total, 2),
+                comparedRows=len(compared),
+            )
+
+        campuses = sorted({r.campus for r in rows})
+        return BacktestResponse(
+            term=request.term,
+            method=forecast.summary.method,
+            demandMetric=demand_metric,
+            metrics=_metrics(rows),
+            byCampus={campus: _metrics([r for r in rows if r.campus == campus]) for campus in campuses},
+            rows=rows,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Backtest failed")
 
 
 # ============== Ensemble & Diagnostics Routes ==============

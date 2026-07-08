@@ -9,6 +9,8 @@ const baseConfig: ForecastConfig = {
   bufferPercent: 10,
   quartersToForecast: 2,
   term: 'Spring 2026',
+  method: 'auto',
+  demandMetric: 'actual',
 };
 
 describe('ConfigSidebar', () => {

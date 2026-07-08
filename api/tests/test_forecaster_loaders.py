@@ -156,6 +156,34 @@ class TestLoadTermEnrollmentsMasterSchedule:
         result = load_term_enrollments(csv, term_code="202630")
         assert result[("SAVANNAH", "FOUN 110")] == 38.0
 
+    def test_master_csv_dedupes_duplicate_crn_rows(self, tmp_path):
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "CRN,SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\n"
+            "12345,FOUN,110,20,SAV,202630\n"
+            "12345,FOUN,110,20,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630")
+        assert result[("SAVANNAH", "FOUN 110")] == 20.0
+
+    def test_demand_metric_max_uses_max_enrollment(self, tmp_path):
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "SUBJ,CRS NUMBER,ACT ENR,MAX ENR,WL ACT ENR,CAMPUS,TERM\n"
+            "FOUN,110,17,20,3,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630", demand_metric="max")
+        assert result[("SAVANNAH", "FOUN 110")] == 20.0
+
+    def test_demand_metric_actual_plus_waitlist(self, tmp_path):
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "SUBJ,CRS NUMBER,ACT ENR,MAX ENR,WL ACT ENR,CAMPUS,TERM\n"
+            "FOUN,110,17,20,3,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630", demand_metric="actual_plus_waitlist")
+        assert result[("SAVANNAH", "FOUN 110")] == 20.0
+
     def test_missing_crs_number_skipped(self, tmp_path):
         csv = tmp_path / "master.csv"
         _write(csv, "SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\nFOUN,,20,SAV,202630\n")

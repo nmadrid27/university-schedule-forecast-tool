@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Message, ForecastResult, ForecastSummary, ForecastConfig } from '@/lib/types';
+import type { Message, ForecastResult, ForecastSummary, ForecastConfig } from '@/lib/types';
 import { api } from '@/lib/api';
 
 // Generate unique ID for messages
@@ -61,11 +61,14 @@ export function useChat(config?: ForecastConfig) {
 
                 const forecastResponse = await api.runForecast({
                     term: forecastTerm,
-                    method: 'historical',
+                    method: config?.method ?? 'auto',
+                    demandMetric: config?.demandMetric ?? 'actual',
                     config: config ? {
                         capacity: config.capacity,
                         progressionRate: config.progressionRate,
                         bufferPercent: config.bufferPercent,
+                        method: config.method,
+                        demandMetric: config.demandMetric,
                     } : undefined,
                 });
 
@@ -100,10 +103,13 @@ export function useChat(config?: ForecastConfig) {
         } catch (error) {
             console.error('API error:', error);
 
+            const detail = error instanceof Error ? error.message : '';
             const errorMessage: Message = {
                 id: generateId(),
                 role: 'assistant',
-                content: "I couldn't connect to the backend server. Please make sure the backend is running on port 8000. You can start it with `./Forecast_Tool_Launcher.command` or manually with `python3 api/main.py`.",
+                content: detail
+                    ? `Forecast request failed: ${detail}`
+                    : "I couldn't connect to the backend server. Please make sure the backend is running on port 8000. You can start it with `./Forecast_Tool_Launcher.command` or manually with `python3 api/main.py`.",
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorMessage]);
@@ -121,11 +127,14 @@ export function useChat(config?: ForecastConfig) {
         try {
             const forecastResponse = await api.runForecast({
                 term: forecastTerm,
-                method: 'historical',
+                method: config?.method ?? 'auto',
+                demandMetric: config?.demandMetric ?? 'actual',
                 config: config ? {
                     capacity: config.capacity,
                     progressionRate: config.progressionRate,
                     bufferPercent: config.bufferPercent,
+                    method: config.method,
+                    demandMetric: config.demandMetric,
                 } : undefined,
             });
             setForecastResults(forecastResponse.results);
