@@ -117,7 +117,15 @@ Format: `YYYYQQ` where QQ is `10`=Fall, `20`=Winter, `30`=Spring, `40`=Summer.
 
 **Critical**: Fall uses `calendar_year + 1` for the academic year. Fall 2025 → term code `202610`. All other quarters: academic year = calendar year.
 
-### Sequence-Based Forecasting (Primary)
+### Historical Same-Season Forecasting (Default)
+
+`/api/forecast` defaults to the historical same-season method (`run_sameseason_forecast` in `api/forecaster.py`). Each FOUN course is projected from its own prior same-season enrollment, using post-rollout terms only (academic-year code > `_FOUN_CURRICULUM_START`). With 2+ same-season years it fits the season-aware OLS trend; with one year it falls back to last year's same term (level). This method is independent of the sequencing map and immune to sequencing-guide changes.
+
+- Method selection: the request `method` field (`"historical"` or `"sequence"`), then the config key `"method"`, default `"historical"`. The sequence-map engine remains available via `method: "sequence"`.
+- Data requirement: the imported Master Schedule must include the **prior year's same quarter** (e.g. Fall 2025 to forecast Fall 2026). A missing same-season term returns a 422 naming the term to import.
+- Brand-new courses with no history are returned flagged (method `"same_season_new_course"`, 0 seats) for a manual estimate.
+
+### Sequence-Based Forecasting (opt-in via `method: "sequence"`)
 
 1. `FOUN_sequencing_map_by_major.csv` maps prerequisite courses → target FOUN courses by major and campus
 2. "CHOICE" entries split demand evenly (`1/N` weighting) across listed course options
@@ -185,7 +193,7 @@ Distribution: Git repo with `.git/` for updates, or plain ZIP (update features d
 
 ## LLM Configuration
 
-Provider: **Anthropic** (`claude-haiku-4-5-20251001`). API key stored in `.env.local` (gitignored). Configure via the AI Assistant section in the Config sidebar — never via the terminal (would expose the key in shell history). To rotate: revoke at console.anthropic.com, then re-enter through the UI.
+Provider: **Anthropic** (`claude-haiku-4-5-20251001`), optional (the regex `SimpleCommandParser` runs when no key is set). The key is stored in `settings.json` under the app-data directory resolved by `api/paths.py` (the project root in dev, the OS app-data folder when packaged), not in `.env.local`. Configure via the AI Assistant section in the Config sidebar, never via the terminal (would expose the key in shell history). To rotate: revoke at console.anthropic.com, then re-enter through the UI.
 
 `GET /api/llm/status` returns `configured: true/false` and `has_key: bool` — never the key itself.
 
@@ -201,13 +209,26 @@ The end user has **read access to one Cognos report only**: the **PZSMSCP — Fl
 
 ## Current State & Known Gaps
 
-- Test framework in place (pytest + Vitest); no CI/CD pipeline yet
-- 2 pre-existing backend test failures in `test_forecast_api.py` ratio-fallback tests (missing `summary` key in response)
+- Test framework in place (pytest + Vitest). Windows installer CI added (`.github/workflows/build-windows.yml`); no test-running CI yet.
+- Backend suite green: **535 passing, 0 failing** (frontend 144). The former 2 ratio-fallback failures were a real production bug, fixed 2026-06-06: a redundant local `resolve_term_info` import in `run_forecast` caused `UnboundLocalError` on the Summer ratio-fallback path (swallowed into a 500, so every Summer forecast failed).
+- `prophet` and `plotly` removed from `requirements.txt`; `forecast_tool/forecasting/prophet_forecast.py` deleted (Prophet was unused on the production path and blocked Windows installs). The ensemble's `"prophet"` dict keys are retained as labels only.
 - `.venv/` may have broken symlinks after Python upgrades; recreate with `python3 -m venv .venv`
 - `Data/adjustments/` is gitignored — fresh worktrees show raw forecast numbers (no manual `set` overrides applied)
-- `forecast_spring26_from_sequence_guides.py` CLI has drifted significantly from `api/forecaster.py` — missing year filter, enrollment weights, legacy crosswalk, ATLANTA, admits demand. Do not use for production forecasts.
+- Per-term CLI scripts (`forecast_spring26_from_sequence_guides.py`, `forecast_fall26_from_sequence_guides.py`, `forecast_summer26_foun.py`) retired to the gitignored `deprecated/` folder (drifted from `api/forecaster.py`: missing year filter, enrollment weights, legacy crosswalk, ATLANTA, admits demand). Forecast via the desktop app or `POST /api/forecast`.
 - `_COGNOS_TO_SEQ_PROGRAMS` maps 34 of 46 Cognos codes; 12 unmapped codes are now logged via `logging.warning` (was silent). Mapping decisions moot in production (Cognos by-major weighting disabled — see "Data Access Constraints" above).
 - PZSMSCP xlsx loader added to `load_term_enrollments` / `get_available_terms` (auto-dispatch on file extension; dedupes co-taught rows by CRN). End-user input is now exclusively the PZSMSCP Cognos export.
+
+## Desktop App Packaging (v1)
+
+Packaged as an offline double-click desktop app for macOS (`.dmg`) and Windows (`.exe`) via **PyInstaller + pywebview**. One Python process starts FastAPI on a local port, serves the static Next.js export and the API same-origin, and opens a native webview window (`desktop/app.py`).
+
+- **`api/paths.py`** resolves writable vs. read-only locations. In dev everything is under the project root (tests unchanged). When frozen, writable state (config, `Data/`, adjustments, outputs, the `settings.json` key store) lives in the OS app-data folder (`~/Library/Application Support/SCAD Forecast Tool/` on macOS, `%APPDATA%\SCAD Forecast Tool\` on Windows), and read-only seed files live in the bundle. `ensure_seeded()` copies bundled seeds (`build/seed/`, `build/seed_config/`) into app-data on first run.
+- **Frontend** builds with `output: 'export'` and `NEXT_PUBLIC_API_URL=''` (same-origin relative calls; `lib/api.ts` uses `??` not `||`). No Node at runtime. The frontend uses **pnpm** (`package-lock.json` removed).
+- **In-app import**: `POST /api/data/import` takes a multipart upload (`kind=master|admits`) driven by hidden `<input type="file">` buttons in `ConfigSidebar` ("Import Master Schedule…" and "Import Admits (optional)…"); master sets `enrollment_source`, admits sets `admitsFile`. The pywebview `js_api` dialog was removed (it did not display on macOS from a worker thread). Requires `python-multipart` (bundled via the spec's `collect_submodules("multipart")`).
+- **No-feeder guardrail**: `/api/forecast` returns a 422 naming the missing prior quarters when the Master Schedule has no feeder-term enrollment (the whole forecast is zero), instead of returning a silent screen of zeros. The forecast for term X needs the Master Schedule to include the two quarters before X (e.g. Fall + Winter to forecast Spring), not X's own actuals. Spring 2026 accuracy root-cause and the actuals-based fix worklist: `docs/SPRING_2026_CALIBRATION.md` (under-forecast is seq-map miscalibration, not a code bug).
+- **Build pipeline**: `build/forecast_tool.spec` (PyInstaller), `build/build_mac.sh` to `.dmg` via dmgbuild, `.github/workflows/build-windows.yml` to `.exe` via Inno Setup (`build/installer.iss`). Desktop toolchain in `requirements-desktop.txt` (pywebview, pyinstaller).
+- **Not in v1**: code signing (Gatekeeper/SmartScreen show a one-time unsigned warning, documented in `docs/HANDOFF_GUIDE.md`), auto-update, bundled local LLM, Intel-Mac build (arm64 only).
+- **Status**: code complete on branch `feat/desktop-packaging` (550 backend / 144 frontend green). The **Windows installer now builds green in CI** (run 27163186485 on `767a039`; artifact `SCAD-Forecast-Tool-Windows`, the `SCAD-Forecast-Tool-Setup.exe`). Two CI fixes were needed: `frontend/.npmrc` sets `node-linker=hoisted` (Turbopack cannot resolve pnpm's symlinked node_modules on the Windows runner) and `build/installer.iss` points at the repo-root `dist/` (where `--distpath dist` writes). A `push: branches: [feat/desktop-packaging]` trigger builds the installer on each push, except docs-only pushes (`paths-ignore: **.md, docs/**`); `v*` tags always build, since GitHub does not apply path filters to tag pushes. CI actions run on Node 24 (checkout v6, setup-node v6, setup-python v6, pnpm/action-setup v6, upload-artifact v7); both `ci.yml` and `build-windows.yml` are green on `d2f5384`. The Mac `.dmg` build and the GUI smoke test on real Mac and Windows machines still need to run. Design and plan: `docs/superpowers/specs/2026-06-06-desktop-packaging-design.md`, `docs/superpowers/plans/2026-06-06-desktop-packaging.md`.
 
 ## Code Standards
 

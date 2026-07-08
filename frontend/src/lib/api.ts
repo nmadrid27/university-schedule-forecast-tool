@@ -1,6 +1,6 @@
 // API client for communicating with the FastAPI backend
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 export interface ChatRequest {
     message: string;
@@ -11,7 +11,7 @@ export interface ChatRequest {
 
 export interface ForecastRequest {
     term: string;
-    method?: 'sequence' | 'prophet' | 'demand';
+    method?: 'historical' | 'sequence';
     config?: {
         capacity?: number;
         progressionRate?: number;
@@ -102,6 +102,23 @@ class ApiClient {
         }>('/api/data/files', {
             method: 'GET',
         });
+    }
+
+    async importDataFile(file: File, kind: 'master' | 'admits' = 'master') {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('kind', kind);
+        // Use raw fetch (not this.request) so the browser sets the multipart
+        // Content-Type with its boundary; do not set it manually.
+        const response = await fetch(`${this.baseUrl}/api/data/import`, {
+            method: 'POST',
+            body: form,
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Import failed: ${response.status}`);
+        }
+        return response.json() as Promise<{ success: boolean; stored_as: string; kind: string; data_dir: string }>;
     }
 
     // Get current config

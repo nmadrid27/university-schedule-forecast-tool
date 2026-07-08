@@ -1,0 +1,22 @@
+legacy_code,foun_code,department_code,department_name,sequence_id,sequence_order,term_hint,notes
+DSGN 100,FOUN 110,FOUN,Foundations,FOUN_CORE,1,Fall,Legacy DSGN course mapped to FOUN 110
+DRAW 100,FOUN 111,FOUN,Foundations,FOUN_CORE,2,Fall,Legacy DRAW course mapped to FOUN 111
+DSGN 101,FOUN 112,FOUN,Foundations,FOUN_CORE,3,Winter,
+DSGN 115,FOUN 113,FOUN,Foundations,FOUN_CORE,4,Winter,DSGN 105 also maps to FOUN 113
+DRAW 101,FOUN 220,FOUN,Foundations,FOUN_CORE,5,Winter,
+DRAW 200,FOUN 230,FOUN,Foundations,FOUN_CORE,6,Spring,
+DSGN 102,FOUN 240,FOUN,Foundations,FOUN_CORE,7,Spring,
+DRAW 230,FOUN 245,FOUN,Foundations,FOUN_CORE,8,Spring,
+DRAW 206,FOUN 250,FOUN,Foundations,FOUN_CORE,9,Summer,
+DSGN 204,FOUN 251,FOUN,Foundations,FOUN_CORE,10,Summer,
+DRAW 240,FOUN 260,FOUN,Foundations,FOUN_CORE,11,Summer,
+DRAW 201,FOUN 220,FOUN,Foundations,FOUN_CORE,5,Winter,Alternate DRAW variant
+DRAW 210,FOUN 230,FOUN,Foundations,FOUN_CORE,6,Spring,
+DRAW 225,FOUN 245,FOUN,Foundations,FOUN_CORE,8,Spring,
+DRAW 242,FOUN 260,FOUN,Foundations,FOUN_CORE,11,Summer,
+DRAW 250,FOUN 250,FOUN,Foundations,FOUN_CORE,9,Summer,
+DRAW 310,FOUN 260,FOUN,Foundations,FOUN_CORE,11,Summer,
+DRAW 312,FOUN 260,FOUN,Foundations,FOUN_CORE,11,Summer,
+DRAW 324,FOUN 260,FOUN,Foundations,FOUN_CORE,11,Summer,
+DSGN 105,FOUN 113,FOUN,Foundations,FOUN_CORE,4,Winter,
+DSGN 208,FOUN 251,FOUN,Foundations,FOUN_CORE,10,Summer,

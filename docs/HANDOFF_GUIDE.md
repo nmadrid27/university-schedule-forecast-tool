@@ -18,7 +18,51 @@ The tool supports all four SCAD quarters: Fall, Winter, Spring, and Summer.
 
 ---
 
-## First-Time Setup
+## Installing the Desktop App
+
+This is the recommended way to use the tool. You install a regular double-click app, and everything runs on your own computer. No setup beyond the installer is required.
+
+### macOS
+
+1. Open the `.dmg` file you received.
+2. Drag **SCAD Forecast Tool** into the **Applications** folder.
+3. The first time you open it, right-click (or Control-click) the app in Applications and choose **Open**, then click **Open** again in the dialog. This clears a one-time security warning, because version 1 is unsigned.
+4. After that first time, open the app normally (double-click).
+
+### Windows
+
+1. Run **`SCAD-Forecast-Tool-Setup.exe`**.
+2. If a blue **"Windows protected your PC"** screen appears, click **More info**, then **Run anyway**. This is a one-time step, because version 1 is unsigned.
+3. If the app window is blank when it opens, install the **Microsoft Edge WebView2 Runtime** (a free Microsoft download), then reopen the app. WebView2 is already present on Windows 11 and on most updated Windows 10 machines, so you may not need this step.
+
+### Where Your Data Lives
+
+The app keeps your data on your own computer:
+
+- macOS: `~/Library/Application Support/SCAD Forecast Tool/`
+- Windows: `%APPDATA%\SCAD Forecast Tool\`
+
+You normally do not need to open this folder.
+
+### Loading Data Each Quarter
+
+Click **Import Master Schedule…** inside the app and pick your PZSMSCP export. The app copies it into place; there is no need to move files by hand.
+
+**The tool forecasts each course from last year's same term,** so the export should include the **prior year's same quarter**: to forecast Fall 2026, include Fall 2025. If that term is missing, the app says so instead of returning a screen of zeros. Brand-new courses with no prior history are flagged for a manual estimate.
+
+If you switch to the older sequence-map method, a different rule applies. **That method's export must include the two quarters *before* the term you want to forecast,** because the model projects forward from those feeder terms. To forecast Spring, the file must contain that year's Fall and Winter (term codes `202610` and `202620`) alongside Spring. Do **not** import the term's own final actuals; that is the result you are trying to predict, and the app will now stop and tell you the feeder term is missing instead of returning a screen of zeros.
+
+Optionally, click **Import Admits (optional)…** and pick the **PZSAAPF — Accepted Applicants** report. It feeds new-student demand into the intro courses (FOUN 110/111); without it, those courses read low.
+
+### Updating the App
+
+When a new version is provided, download and run the new installer. There is no auto-update in this version.
+
+---
+
+## Run From Source (developers)
+
+This path is only for developers running the tool from source. If you are the scheduling admin, use the desktop app described above instead.
 
 You only need to do this once. These steps install the software that the tool needs to run.
 
@@ -53,6 +97,8 @@ You only need to do this once. These steps install the software that the tool ne
 ---
 
 ## Daily Usage
+
+> **Desktop app users:** the steps below describe the run-from-source launcher. If you installed the desktop app, just open **SCAD Forecast Tool** like any other app; it opens its own window, and there is no Terminal, separate browser tab, or launcher script to run.
 
 ### Starting the Tool
 
@@ -270,10 +316,10 @@ forecast-tool/
 ## FAQ
 
 **Q: Can I use this on a Windows computer?**
-A: The tool is designed for macOS. The `.command` launcher scripts are macOS-specific. The underlying code (Python + Node.js) works on Windows, but you'd need to start the servers manually from the command line.
+A: Yes. The desktop app ships for both macOS and Windows; see "Installing the Desktop App" above. The older `.command` launcher scripts are macOS-only and belong to the run-from-source path for developers.
 
 **Q: Do I need an internet connection?**
-A: Only for the first-time setup (to download dependencies) and to receive updates. The forecasting itself runs entirely offline on your computer. If you're offline when launching, the auto-update check is skipped automatically.
+A: No. The desktop app runs entirely offline once installed; you only need to be online to download the installer or a new version. (The run-from-source path needs internet for first-time dependency setup and updates, but forecasting itself is always offline.)
 
 **Q: How accurate are the forecasts?**
 A: Treat the forecast as a planning floor, not a precise demand estimate. A Spring 2026 backtest against PZSMSCP ACT enrollment counts (the published, near-final demand) showed the model under-forecasts most courses by 20-50% on the Savannah campus and 30-65% on the SCADnow campus. The aggregate forecast captures roughly 70% of measured Savannah demand and 30% of measured SCADnow demand. Several upper-division FOUN courses (250, 251, 260, 330, 331, 360) currently produce no forecast row at all because of a curriculum-year filter assumption that needs revisiting. Full numbers and root-cause analysis are in `docs/SPRING_2026_BACKTEST.md`. The sequence-based method is still the most reliable approach available because it directly traces enrolled students to next-term courses, but plan with the under-forecast bias in mind: use ACT or MAX history for the same course as a sanity-check ceiling against any forecast.

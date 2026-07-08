@@ -9,7 +9,7 @@ import math
 import re
 import sys
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal, Tuple
@@ -20,11 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from forecaster import (
     run_sequence_forecast,
+    run_sameseason_forecast,
     run_ratio_forecast,
     load_previous_forecast,
     get_available_terms,
     term_code_to_label,
     resolve_term_info,
+    _post_rollout_prior_same_season_codes,
 )
 from adjustments import (
     Adjustment,
@@ -41,10 +43,12 @@ from llm_service import (
     load_api_key,
     save_api_key,
 )
+import paths
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = PROJECT_ROOT / "forecast_config.json"
-DATA_DIR = PROJECT_ROOT / "Data"
+paths.ensure_seeded()
+PROJECT_ROOT = paths.app_data_dir()
+CONFIG_PATH = paths.config_path()
+DATA_DIR = paths.data_dir()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -185,7 +189,7 @@ class ChatResponse(BaseModel):
 
 class ForecastRequest(BaseModel):
     term: str
-    method: Optional[str] = "sequence"
+    method: Optional[str] = "historical"
     config: Optional[Dict[str, Any]] = None
     # Scenario percentages: e.g. [{"label": "conservative", "pct": -9},
     #                               {"label": "optimistic",  "pct": -5}]
@@ -456,57 +460,92 @@ def run_forecast(request: ForecastRequest):
         admits_path = resolve_optional("admitsFile")
         enrollment_by_major_path = resolve_optional("enrollmentByMajorFile")
 
-        # Run the real forecast
-        rows = run_sequence_forecast(
-            sequence_map_path=sequence_map_path,
-            enrollment_source_path=enrollment_source_path,
-            target_term=target_term,
-            capacity=capacity,
-            progression_rate=progression_rate,
-            buffer_percent=buffer_percent,
-            admits_path=admits_path,
-            enrollment_by_major_path=enrollment_by_major_path,
-        )
+        # Run the real forecast. The historical same-season method is the
+        # default; the sequence engine (with ratio fallback) is opt-in.
+        method = (request.method or disk_cfg.get("method") or "historical").lower()
 
-        # Fallback: if sequence-based returned no results (e.g. Summer has
-        # no sequencing data), try the ratio-based method using the closest
-        # feeder quarter's existing forecast output.
-        method_label = "Sequence-based"
-        if not rows:
-            info = resolve_term_info(target_term)
-            feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
-            feeder_tc = info["closer_feeder"]["term_code"]
-            feeder_label = term_code_to_label(feeder_tc)
-            feeder_year = feeder_label.split()[1] if " " in feeder_label else feeder_tc[:4]
-            # Look for the feeder quarter's forecast CSV
-            feeder_pattern = f"{feeder_quarter}_{feeder_year}_FOUN_Forecast*.csv"
-            feeder_csvs = sorted(DATA_DIR.glob(feeder_pattern))
-            historical_path = DATA_DIR / "FOUN_Historical.csv"
-            if feeder_csvs:
-                # Prefer the Sequence Guides output (most reliable),
-                # then try others until one has compatible columns.
-                preferred = [
-                    p for p in feeder_csvs
-                    if "Sequence_Guides" in p.name or "sequence_guides" in p.name
-                ]
-                candidates = preferred + [
-                    p for p in reversed(feeder_csvs) if p not in preferred
-                ]
-                for csv_path in candidates:
-                    rows = run_ratio_forecast(
-                        feeder_forecast_path=csv_path,
-                        historical_data_path=historical_path,
-                        target_term=target_term,
-                        capacity=capacity,
-                        buffer_percent=buffer_percent,
-                    )
-                    if rows:
-                        method_label = "Ratio-based"
-                        break
+        if method == "sequence":
+            rows = run_sequence_forecast(
+                sequence_map_path=sequence_map_path,
+                enrollment_source_path=enrollment_source_path,
+                target_term=target_term,
+                capacity=capacity,
+                progression_rate=progression_rate,
+                buffer_percent=buffer_percent,
+                admits_path=admits_path,
+                enrollment_by_major_path=enrollment_by_major_path,
+            )
+            method_label = "Sequence-based"
+            # Fallback: if sequence-based returned no results (e.g. Summer has
+            # no sequencing data), try the ratio-based method using the closest
+            # feeder quarter's existing forecast output.
+            if not rows:
+                info = resolve_term_info(target_term)
+                feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
+                feeder_tc = info["closer_feeder"]["term_code"]
+                feeder_label = term_code_to_label(feeder_tc)
+                feeder_year = feeder_label.split()[1] if " " in feeder_label else feeder_tc[:4]
+                feeder_pattern = f"{feeder_quarter}_{feeder_year}_FOUN_Forecast*.csv"
+                feeder_csvs = sorted(DATA_DIR.glob(feeder_pattern))
+                historical_path = DATA_DIR / "FOUN_Historical.csv"
+                if feeder_csvs:
+                    preferred = [p for p in feeder_csvs
+                                 if "Sequence_Guides" in p.name or "sequence_guides" in p.name]
+                    candidates = preferred + [p for p in reversed(feeder_csvs) if p not in preferred]
+                    for csv_path in candidates:
+                        rows = run_ratio_forecast(
+                            feeder_forecast_path=csv_path,
+                            historical_data_path=historical_path,
+                            target_term=target_term,
+                            capacity=capacity,
+                            buffer_percent=buffer_percent,
+                        )
+                        if rows:
+                            method_label = "Ratio-based"
+                            break
+        else:
+            rows = run_sameseason_forecast(
+                master_schedule_path=enrollment_source_path,
+                target_term=target_term,
+                capacity=capacity,
+                buffer_percent=buffer_percent,
+            )
+            method_label = "Same-season historical"
 
         # Apply output-level adjustments to rows
         if active_adjustments and rows:
             rows = apply_output_adjustments(active_adjustments, rows, capacity)
+
+        # Guardrail: nothing to forecast means the Master Schedule lacks the
+        # data this method needs. Explain it instead of returning zeros.
+        no_data = (not rows) or sum((r.get("projected_seats") or 0) for r in rows) == 0
+        if no_data:
+            if method == "sequence":
+                _g = resolve_term_info(target_term)
+                _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
+                _farther = term_code_to_label(_g.get("farther_feeder", {}).get("term_code", ""))
+                _detail = (
+                    f"No feeder enrollment found to forecast {target_term}. The imported "
+                    f"Master Schedule must include the prior quarters ({_farther} and "
+                    f"{_closer}). Import the PZSMSCP export covering those terms."
+                )
+            else:
+                _priors = _post_rollout_prior_same_season_codes(target_term)
+                if not _priors:
+                    _season = target_term.split()[0]
+                    _detail = (
+                        f"{target_term} is the first post-rollout {_season}, so there is no "
+                        f"prior same-season term under the current FOUN curriculum to forecast "
+                        f"from. Switch to the sequence method for this term, or set a manual "
+                        f"estimate."
+                    )
+                else:
+                    _prior = term_code_to_label(_priors[0])
+                    _detail = (
+                        f"No same-season history found to forecast {target_term}. Import a "
+                        f"Master Schedule that includes the prior year's same quarter ({_prior})."
+                    )
+            raise HTTPException(status_code=422, detail=_detail)
 
         # Load previous forecast for change comparison (best-effort).
         # Only compare against the same term's prior forecast to avoid
@@ -538,7 +577,6 @@ def run_forecast(request: ForecastRequest):
         # Determine target season for anomaly detection
         _target_season = None
         try:
-            from forecaster import resolve_term_info
             _info = resolve_term_info(target_term)
             _target_season = _info.get("target_quarter", "").capitalize()
         except Exception:
@@ -614,6 +652,8 @@ def run_forecast(request: ForecastRequest):
                 adjustmentsApplied=adj_count if adj_count > 0 else None,
             ),
         )
+    except HTTPException:
+        raise
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Required data file not found")
     except ValueError as e:
@@ -687,7 +727,7 @@ def llm_status():
 
 @app.put("/api/llm/config")
 def update_llm_config(request: LLMConfigRequest):
-    """Update LLM provider/model/key. Writes key to .env.local, rest to config."""
+    """Update LLM provider/model/key. Writes key to app-data settings.json, rest to config."""
     disk_cfg = _read_disk_config()
     llm_cfg = disk_cfg.get("llm", {})
 
@@ -840,7 +880,7 @@ def update_config(config: ConfigModel):
 async def list_data_files():
     """List available data files in the Data directory."""
     try:
-        data_dir = Path(__file__).parent.parent / "Data"
+        data_dir = DATA_DIR
         files = []
 
         if data_dir.exists():
@@ -862,6 +902,38 @@ async def list_data_files():
         return {"files": files}
     except OSError:
         raise HTTPException(status_code=500, detail="Failed to read data directory")
+
+
+@app.post("/api/data/import")
+async def import_data_file(file: UploadFile = File(...), kind: str = Form("master")):
+    """Receive an uploaded report and store it in the Data directory.
+
+    kind="master" stores the PZSMSCP Master Schedule (the forecast's enrollment
+    source); kind="admits" stores the PZSAAPF accepted-applicants report (new-
+    student demand for intro courses). A multipart upload lets a plain
+    <input type="file"> drive the picker, avoiding the pywebview js_api dialog
+    which does not display reliably on macOS from a worker thread.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".xlsx", ".xlsm", ".xls", ".csv"):
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    content = await file.read()
+    cfg = _read_disk_config()
+    if kind == "admits":
+        dest = DATA_DIR / ("Admits" + suffix)
+        dest.write_bytes(content)
+        cfg["admitsFile"] = f"Data/{dest.name}"
+    else:
+        dest = DATA_DIR / ("Master Schedule of Classes" + suffix)
+        dest.write_bytes(content)
+        # Point the active config at the imported schedule so the forecast finds
+        # it regardless of extension (.xlsx vs .csv).
+        cfg["enrollment_source"] = f"Data/{dest.name}"
+    _write_disk_config(cfg)
+
+    return {"success": True, "stored_as": dest.name, "kind": kind, "data_dir": str(DATA_DIR)}
 
 
 # ============== Ensemble & Diagnostics Routes ==============
@@ -1113,6 +1185,22 @@ def run_diagnostics():
         raise
     except Exception:
         raise HTTPException(status_code=500, detail="Diagnostics analysis failed")
+
+
+def mount_static_ui() -> None:
+    """Serve the statically-exported Next.js UI at / when present.
+
+    No-op in dev/test where the web build is absent. Mounted last so it does
+    not shadow /api routes.
+    """
+    from fastapi.staticfiles import StaticFiles
+
+    web_dir = paths.bundle_dir() / "web"
+    if web_dir.is_dir():
+        app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="ui")
+
+
+mount_static_ui()
 
 
 if __name__ == "__main__":

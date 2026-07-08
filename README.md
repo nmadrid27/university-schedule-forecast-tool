@@ -1,8 +1,28 @@
 # SCAD FOUN Enrollment Forecasting Tool
 
-Predicts Foundation course enrollment and calculates section needs for upcoming terms. Primary method: sequence-based forecasting from major sequencing guides. Alternative: 3-model ensemble (Prophet + ETS + ARIMA).
+Predicts Foundation course enrollment and calculates section needs for upcoming terms. Primary method: sequence-based forecasting from major sequencing guides. Alternative: 3-model ensemble (OLS + ETS + ARIMA).
 
-## Quick Start (macOS)
+## Desktop App (recommended)
+
+The scheduling admin installs a double-click app: a `.dmg` on macOS, or a `.exe` installer on Windows. No Homebrew, Python, or Node required.
+
+The app runs fully offline. Your data stays on the machine in an app-data folder:
+
+- macOS: `~/Library/Application Support/SCAD Forecast Tool/`
+- Windows: `%APPDATA%\SCAD Forecast Tool\`
+
+To load data, click the in-app **Import Master Schedule…** button and pick the PZSMSCP export. **It must include the two quarters before the term you are forecasting** (e.g. Fall and Winter to forecast Spring); the model projects forward from those feeder terms, so a Spring-only file produces no forecast (the app will say so). Optionally use **Import Admits (optional)…** to load the PZSAAPF accepted-applicants report for new-student demand. The app copies files into the data folder for you.
+
+The first launch shows a one-time security prompt because v1 is unsigned. On macOS, right-click the app and choose **Open**. On Windows, click **More info**, then **Run anyway**.
+
+### Building the installers (for maintainers)
+
+- macOS: run `build/build_mac.sh` on an Apple Silicon Mac to produce the `.dmg`.
+- Windows: the `.exe` is built by the GitHub Actions workflow `.github/workflows/build-windows.yml`. Run it from the Actions tab, then download the artifact.
+
+## Run From Source (developers)
+
+This path is for development, not for the end-user admin (who uses the desktop app above).
 
 ### First time? Run the installer:
 
@@ -69,7 +89,7 @@ Three-tier application: Next.js frontend, FastAPI backend, Python forecasting en
 
 - **Primary**: Sequence-based — uses major sequencing guides to project demand from feeder courses
 - **Fallback**: Ratio-based — historical enrollment ratios (used for Summer and terms without sequencing data)
-- **Alternative**: 3-model ensemble (Prophet 40%, ETS 35%, ARIMA 25%)
+- **Alternative**: 3-model ensemble (OLS 40%, ETS 35%, ARIMA 25%)
 
 ### Key Configuration
 
@@ -96,11 +116,6 @@ The companion `PZSAAPF-SL31` admits report (already wired) provides next-term ap
 
 ## CLI Usage
 
-For automated/batch forecasting without the UI:
+The per-term CLI scripts (`forecast_spring26_from_sequence_guides.py` and siblings) are deprecated and have been removed from the repo. They no longer run. Run forecasts through the desktop app or the API endpoint `POST /api/forecast`.
 
-```bash
-source .venv/bin/activate
-python3 forecast_spring26_from_sequence_guides.py --config forecast_config.json
-```
-
-See [AGENTS.md](AGENTS.md) for the full CLI workflow.
+The CLI runbook in [AGENTS.md](AGENTS.md) is retained as legacy reference only.

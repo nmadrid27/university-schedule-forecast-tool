@@ -7,10 +7,9 @@ remain fast and deterministic (no actual Prophet/ETS/ARIMA fitting).
 import sys
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
-import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -88,8 +87,6 @@ class TestEnsembleEndpoint:
                   return_value=_make_hist_df()),
             patch("forecast_tool.data.transformers.quarter_to_date",
                   side_effect=lambda y, q: pd.Timestamp(f"{y}-01-01")),
-            patch("forecast_tool.forecasting.prophet_forecast.forecast_prophet",
-                  side_effect=self._mock_forecast_fn),
             patch("forecast_tool.forecasting.ets_forecast.forecast_ets",
                   side_effect=self._mock_forecast_fn),
             patch("forecast_tool.forecasting.arima_forecast.forecast_arima",
@@ -102,8 +99,6 @@ class TestEnsembleEndpoint:
                   return_value=_make_hist_df()),
             patch("forecast_tool.data.transformers.quarter_to_date",
                   side_effect=lambda y, q: pd.Timestamp(f"{y}-01-01")),
-            patch("forecast_tool.forecasting.prophet_forecast.forecast_prophet",
-                  side_effect=self._mock_forecast_fn),
             patch("forecast_tool.forecasting.ets_forecast.forecast_ets",
                   side_effect=self._mock_forecast_fn),
             patch("forecast_tool.forecasting.arima_forecast.forecast_arima",
@@ -118,8 +113,6 @@ class TestEnsembleEndpoint:
                   return_value=_make_hist_df()),
             patch("forecast_tool.data.transformers.quarter_to_date",
                   side_effect=lambda y, q: pd.Timestamp(f"{y}-01-01")),
-            patch("forecast_tool.forecasting.prophet_forecast.forecast_prophet",
-                  side_effect=self._mock_forecast_fn),
             patch("forecast_tool.forecasting.ets_forecast.forecast_ets",
                   side_effect=self._mock_forecast_fn),
             patch("forecast_tool.forecasting.arima_forecast.forecast_arima",

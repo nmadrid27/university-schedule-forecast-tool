@@ -18,7 +18,7 @@ export default function Home() {
     term: 'Spring 2026',
   });
 
-  const { messages, isLoading, sendMessage, clearMessages, forecastResults, forecastSummary, lastAdjustmentChange } = useChat(config);
+  const { messages, isLoading, sendMessage, runForecast, clearMessages, forecastResults, forecastSummary, lastAdjustmentChange } = useChat(config);
   const { adjustments, toggleAdjustment, removeAdjustment, loadAdjustments } = useAdjustments(config.term);
 
   const [showConfig, setShowConfig] = useState(true);
@@ -136,6 +136,8 @@ export default function Home() {
       <ConfigSidebar
         config={config}
         onConfigChange={handleConfigChange}
+        onRunForecast={() => runForecast(config.term)}
+        isRunning={isLoading}
         onToggleCollapse={() => setShowConfig((prev) => !prev)}
         isCollapsed={!showConfig}
       />

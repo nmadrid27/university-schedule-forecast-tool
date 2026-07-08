@@ -5,7 +5,6 @@
   "progression_rate": 0.95,
   "buffer_percent": 10,
   "default_term": "Spring 2026",
-  "method": "historical",
   "llm": {
     "provider": "anthropic",
     "model": "claude-haiku-4-5-20251001",

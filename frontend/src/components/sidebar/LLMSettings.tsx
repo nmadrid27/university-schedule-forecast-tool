@@ -156,7 +156,7 @@ export function LLMSettings() {
             className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
           <p className="text-[10px] text-muted-foreground mt-1">
-            Stored locally in .env.local, never committed to git.
+            Stored locally in the app&apos;s settings; sent only to your chosen AI provider.
           </p>
         </div>
       )}

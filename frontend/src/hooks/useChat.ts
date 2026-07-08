@@ -61,7 +61,7 @@ export function useChat(config?: ForecastConfig) {
 
                 const forecastResponse = await api.runForecast({
                     term: forecastTerm,
-                    method: 'sequence',
+                    method: 'historical',
                     config: config ? {
                         capacity: config.capacity,
                         progressionRate: config.progressionRate,
@@ -112,6 +112,40 @@ export function useChat(config?: ForecastConfig) {
         }
     }, [config, messages]);
 
+    // Run a forecast directly for a chosen term (e.g. the Run Forecast button),
+    // without going through the chat parser. Surfaces backend errors (like the
+    // no-feeder 422) as an assistant message.
+    const runForecast = useCallback(async (term?: string) => {
+        const forecastTerm = term || config?.term || 'Spring 2026';
+        setIsLoading(true);
+        try {
+            const forecastResponse = await api.runForecast({
+                term: forecastTerm,
+                method: 'historical',
+                config: config ? {
+                    capacity: config.capacity,
+                    progressionRate: config.progressionRate,
+                    bufferPercent: config.bufferPercent,
+                } : undefined,
+            });
+            setForecastResults(forecastResponse.results);
+            setForecastSummary({
+                ...forecastResponse.summary,
+                lastUpdated: new Date(),
+            });
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : 'Forecast failed.';
+            setMessages((prev) => [...prev, {
+                id: generateId(),
+                role: 'assistant',
+                content: detail,
+                timestamp: new Date(),
+            }]);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [config]);
+
     const clearMessages = useCallback(() => {
         setMessages([
             {
@@ -129,6 +163,7 @@ export function useChat(config?: ForecastConfig) {
         messages,
         isLoading,
         sendMessage,
+        runForecast,
         clearMessages,
         forecastResults,
         forecastSummary,

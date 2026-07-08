@@ -12,10 +12,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from paths import settings_path
+
 
 # --------------- Configuration ---------------
-
-ENV_FILE = Path(__file__).resolve().parent.parent / ".env.local"
 
 PROVIDER_DEFAULTS = {
     "openai": {"base_url": None, "default_model": "gpt-4o-mini"},
@@ -25,49 +25,42 @@ PROVIDER_DEFAULTS = {
 }
 
 
+def _read_settings() -> Dict[str, Any]:
+    sp = settings_path()
+    if sp.is_file():
+        try:
+            return json.loads(sp.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _write_settings(data: Dict[str, Any]) -> None:
+    sp = settings_path()
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    sp.write_text(json.dumps(data, indent=2))
+
+
 def load_api_key() -> Optional[str]:
-    """Load LLM API key from environment or .env.local file."""
+    """Load LLM API key from the environment or app-data settings.json."""
     key = os.environ.get("LLM_API_KEY")
     if key:
         return key
-    if ENV_FILE.is_file():
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("LLM_API_KEY="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return None
+    return _read_settings().get("LLM_API_KEY")
 
 
 def save_api_key(key: str) -> None:
-    """Write LLM API key to .env.local (creates or updates)."""
-    lines = []
-    found = False
-    if ENV_FILE.is_file():
-        for line in ENV_FILE.read_text().splitlines():
-            if line.strip().startswith("LLM_API_KEY="):
-                lines.append(f"LLM_API_KEY={key}")
-                found = True
-            else:
-                lines.append(line)
-    if not found:
-        lines.append(f"LLM_API_KEY={key}")
-    ENV_FILE.write_text("\n".join(lines) + "\n")
+    """Persist the LLM API key to app-data settings.json."""
+    data = _read_settings()
+    data["LLM_API_KEY"] = key
+    _write_settings(data)
 
 
 def save_env_var(name: str, value: str) -> None:
-    """Write an arbitrary env var to .env.local."""
-    lines = []
-    found = False
-    if ENV_FILE.is_file():
-        for line in ENV_FILE.read_text().splitlines():
-            if line.strip().startswith(f"{name}="):
-                lines.append(f"{name}={value}")
-                found = True
-            else:
-                lines.append(line)
-    if not found:
-        lines.append(f"{name}={value}")
-    ENV_FILE.write_text("\n".join(lines) + "\n")
+    """Persist an arbitrary setting to app-data settings.json."""
+    data = _read_settings()
+    data[name] = value
+    _write_settings(data)
 
 
 # --------------- System Prompt ---------------

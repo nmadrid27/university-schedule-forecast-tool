@@ -4,6 +4,7 @@ parse_llm_response is already covered in test_llm_service.py.
 build_system_prompt is already covered in test_llm_service_prompt.py.
 """
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,30 +29,30 @@ class TestLoadApiKey:
         monkeypatch.setenv("LLM_API_KEY", "env-key-xyz")
         assert load_api_key() == "env-key-xyz"
 
-    def test_reads_from_env_file(self, tmp_path, monkeypatch):
+    def test_reads_from_settings_file(self, tmp_path, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
-        env_file = tmp_path / ".env.local"
-        env_file.write_text('LLM_API_KEY=file-key-abc\n')
-        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"LLM_API_KEY": "file-key-abc"}))
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: settings)
         assert load_api_key() == "file-key-abc"
 
-    def test_strips_quotes_from_file_value(self, tmp_path, monkeypatch):
+    def test_returns_none_on_malformed_settings(self, tmp_path, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
-        env_file = tmp_path / ".env.local"
-        env_file.write_text('LLM_API_KEY="quoted-key"\n')
-        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
-        assert load_api_key() == "quoted-key"
+        settings = tmp_path / "settings.json"
+        settings.write_text("{ not valid json")
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: settings)
+        assert load_api_key() is None
 
     def test_returns_none_when_no_env_var_and_no_file(self, tmp_path, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
-        monkeypatch.setattr(svc_mod, "ENV_FILE", tmp_path / ".env.local")
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: tmp_path / "settings.json")
         assert load_api_key() is None
 
     def test_env_var_takes_priority_over_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("LLM_API_KEY", "env-wins")
-        env_file = tmp_path / ".env.local"
-        env_file.write_text("LLM_API_KEY=file-key\n")
-        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"LLM_API_KEY": "file-key"}))
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: settings)
         assert load_api_key() == "env-wins"
 
 
@@ -59,26 +60,26 @@ class TestLoadApiKey:
 
 class TestSaveApiKey:
     def test_creates_file_when_not_exists(self, tmp_path, monkeypatch):
-        env_file = tmp_path / ".env.local"
-        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        settings = tmp_path / "settings.json"
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: settings)
         save_api_key("new-key")
-        assert "LLM_API_KEY=new-key" in env_file.read_text()
+        assert json.loads(settings.read_text())["LLM_API_KEY"] == "new-key"
 
     def test_updates_existing_key(self, tmp_path, monkeypatch):
-        env_file = tmp_path / ".env.local"
-        env_file.write_text("LLM_API_KEY=old-key\n")
-        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"LLM_API_KEY": "old-key"}))
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: settings)
         save_api_key("updated-key")
-        content = env_file.read_text()
-        assert "LLM_API_KEY=updated-key" in content
-        assert "LLM_API_KEY=old-key" not in content
+        assert json.loads(settings.read_text())["LLM_API_KEY"] == "updated-key"
 
-    def test_preserves_other_env_vars(self, tmp_path, monkeypatch):
-        env_file = tmp_path / ".env.local"
-        env_file.write_text("OTHER_VAR=keep-me\nLLM_API_KEY=old\n")
-        monkeypatch.setattr(svc_mod, "ENV_FILE", env_file)
+    def test_preserves_other_settings(self, tmp_path, monkeypatch):
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"OTHER_VAR": "keep-me", "LLM_API_KEY": "old"}))
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: settings)
         save_api_key("new-key")
-        assert "OTHER_VAR=keep-me" in env_file.read_text()
+        saved = json.loads(settings.read_text())
+        assert saved["OTHER_VAR"] == "keep-me"
+        assert saved["LLM_API_KEY"] == "new-key"
 
 
 # ─── LLMService.is_configured ─────────────────────────────────────────────
@@ -90,7 +91,7 @@ class TestIsConfigured:
 
     def test_openai_without_key_not_configured(self, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
-        monkeypatch.setattr(svc_mod, "ENV_FILE", Path("/nonexistent/.env.local"))
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: Path("/nonexistent/settings.json"))
         service = LLMService(provider="openai")
         assert service.is_configured() is False
 
@@ -100,13 +101,13 @@ class TestIsConfigured:
 
     def test_anthropic_without_key_not_configured(self, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
-        monkeypatch.setattr(svc_mod, "ENV_FILE", Path("/nonexistent/.env.local"))
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: Path("/nonexistent/settings.json"))
         service = LLMService(provider="anthropic")
         assert service.is_configured() is False
 
     def test_ollama_always_configured_no_key_needed(self, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
-        monkeypatch.setattr(svc_mod, "ENV_FILE", Path("/nonexistent/.env.local"))
+        monkeypatch.setattr(svc_mod, "settings_path", lambda: Path("/nonexistent/settings.json"))
         service = LLMService(provider="ollama")
         assert service.is_configured() is True
 

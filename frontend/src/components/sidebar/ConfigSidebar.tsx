@@ -1,13 +1,17 @@
 'use client';
 
+import { useRef, type ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ForecastConfig } from '@/lib/types';
+import { api } from '@/lib/api';
 import { LLMSettings } from './LLMSettings';
 
 interface ConfigSidebarProps {
     config: ForecastConfig;
     onConfigChange?: (config: Partial<ForecastConfig>) => void;
+    onRunForecast?: () => void;
+    isRunning?: boolean;
     onToggleCollapse?: () => void;
     isCollapsed?: boolean;
 }
@@ -28,11 +32,33 @@ const DEFAULT_CONFIG: ForecastConfig = {
 export function ConfigSidebar({
     config,
     onConfigChange,
+    onRunForecast,
+    isRunning = false,
     onToggleCollapse,
     isCollapsed = false,
 }: ConfigSidebarProps) {
     const handleReset = () => {
         onConfigChange?.(DEFAULT_CONFIG);
+    };
+
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const importKindRef = useRef<'master' | 'admits'>('master');
+
+    const triggerImport = (kind: 'master' | 'admits') => {
+        importKindRef.current = kind;
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // reset so the same file can be re-selected
+        if (!file) return;
+        try {
+            const res = await api.importDataFile(file, importKindRef.current);
+            alert(`Imported ${res.kind === 'admits' ? 'admits report' : 'Master Schedule'}. Stored as ${res.stored_as}`);
+        } catch (err) {
+            alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
     };
 
     if (isCollapsed) {
@@ -70,6 +96,31 @@ export function ConfigSidebar({
 
             {/* Config sections */}
             <div className="flex-1 p-4 space-y-6 overflow-y-auto">
+                {/* Data */}
+                <ConfigSection title="Data">
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".xlsx,.xls,.xlsm,.csv"
+                        className="hidden"
+                        onChange={handleFileChange}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => triggerImport('master')}
+                        className="w-full rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
+                    >
+                        Import Master Schedule…
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => triggerImport('admits')}
+                        className="w-full mt-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
+                    >
+                        Import Admits (optional)…
+                    </button>
+                </ConfigSection>
+
                 {/* Forecast Horizon */}
                 <ConfigSection title="Forecast Horizon">
                     <label htmlFor="config-term" className="sr-only">Select forecast term</label>
@@ -83,6 +134,14 @@ export function ConfigSidebar({
                             <option key={t} value={t}>{t}</option>
                         ))}
                     </select>
+                    <Button
+                        type="button"
+                        className="mt-2 w-full"
+                        onClick={onRunForecast}
+                        disabled={isRunning}
+                    >
+                        {isRunning ? 'Running…' : `Run Forecast`}
+                    </Button>
                 </ConfigSection>
 
                 {/* Parameters */}

@@ -5,18 +5,15 @@
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.5.0
+python-multipart>=0.0.9
 
 # Forecasting models
-prophet>=1.1.4
 statsmodels>=0.14.0
 
 # Data processing
 pandas>=2.0.0
 numpy>=1.24.0
 openpyxl>=3.1.0
-
-# Visualization
-plotly>=5.18.0
 
 # LLM providers (optional — only needed if configuring AI assistant)
 openai>=1.12.0
