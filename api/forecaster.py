@@ -397,20 +397,18 @@ def load_sequence_mappings(
                 # (Photography only) and all 264 Winter FOUN 251 students project to
                 # FOUN 220, even though Fashion Marketing and Motion Media Design also
                 # fill those seats and go nowhere in Spring.
-                if target_courses:
-                    for closer_course, closer_weight in closer_raw:
-                        for target_course, target_weight in target_courses:
-                            mappings[campus]["closer_source_totals"][closer_course] += closer_weight * target_weight * row_weight
-                    for farther_course, farther_weight in farther_courses:
-                        for target_course, target_weight in target_courses:
-                            mappings[campus]["farther_source_totals"][farther_course] += farther_weight * target_weight * row_weight
-                else:
-                    # No Spring target: count feeder courses toward the denominator
-                    # using weight 1.0 as the implicit single-target equivalent.
-                    for closer_course, closer_weight in closer_raw:
-                        mappings[campus]["closer_source_totals"][closer_course] += closer_weight * row_weight
-                    for farther_course, farther_weight in farther_courses:
-                        mappings[campus]["farther_source_totals"][farther_course] += farther_weight * row_weight
+                # Each program-row contributes its weight ONCE per source course,
+                # regardless of how many target courses it routes to.  A CHOICE
+                # target cell (weights summing to 1.0) and a single target are one
+                # cohort; so is a co-requisite cell ("FOUN 240; FOUN 245", weights
+                # summing to k) whose students take ALL listed targets.  Multiplying
+                # by the target-weight sum here would split co-req demand 1/k and
+                # over-dilute sibling programs sharing the same feeder.
+                for closer_course, closer_weight in closer_raw:
+                    mappings[campus]["closer_source_totals"][closer_course] += closer_weight * row_weight
+                for farther_course, farther_weight in farther_courses:
+                    mappings[campus]["farther_source_totals"][farther_course] += farther_weight * row_weight
+                if not target_courses:
                     continue  # nothing else to build for this campus row
 
                 for target_course, target_weight in target_courses:
