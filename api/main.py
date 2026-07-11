@@ -549,8 +549,11 @@ def run_forecast(request: ForecastRequest):
                 if _has_signal(rows):
                     method_label = f"Auto ({method_label})"
 
-        # Apply output-level adjustments to rows
-        if active_adjustments and rows:
+        # Apply output-level adjustments to rows. Must run even when the base
+        # forecast produced no rows: course+campus "set" adjustments inject rows
+        # for courses the model cannot produce, which is the manual-estimate
+        # recovery path the no-data 422 below tells the admin to use.
+        if active_adjustments:
             rows = apply_output_adjustments(active_adjustments, rows, capacity)
 
         # Guardrail: nothing to forecast means the Master Schedule lacks the

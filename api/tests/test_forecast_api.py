@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
-from adjustments import Adjustment, TermAdjustments
+from adjustments import Adjustment, AdjustmentScope, TermAdjustments
 
 client = TestClient(main.app)
 
@@ -129,6 +129,31 @@ def test_forecast_adjustments_applied_count_in_summary(monkeypatch):
     )
     body = client.post("/api/forecast", json={"term": "Spring 2026"}).json()
     assert body["summary"]["adjustmentsApplied"] == 1
+
+
+def test_forecast_set_adjustment_injects_row_when_forecast_empty(monkeypatch):
+    """A course+campus 'set' adjustment must inject its row even when the base
+    forecast returns no rows at all — that is exactly the state in which the
+    422 guidance tells the admin to set a manual estimate."""
+    set_adj = Adjustment(
+        id="x2", type="output", operation="set", value=60,
+        scope=AdjustmentScope(course="FOUN 110", campus="SAV"),
+        reason="manual estimate", enabled=True, source="manual",
+    )
+    monkeypatch.setattr(main, "run_sequence_forecast", lambda **kw: [])
+    monkeypatch.setattr(main, "run_sameseason_forecast", lambda **kw: [])
+    monkeypatch.setattr(
+        main,
+        "load_adjustments",
+        lambda data_dir, term: TermAdjustments(term=term, adjustments=[set_adj]),
+    )
+    r = client.post("/api/forecast", json={"term": "Spring 2026", "method": "sequence"})
+    assert r.status_code == 200
+    body = r.json()
+    injected = [x for x in body["results"] if x["course"] == "FOUN 110"]
+    assert injected, "set adjustment row was not injected"
+    assert injected[0]["projectedSeats"] == 60
+    assert injected[0]["adjusted"] is True
 
 
 # --------------- Error handling -------------------------------------------
