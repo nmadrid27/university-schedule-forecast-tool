@@ -6,7 +6,9 @@ Exposes existing Python forecasting logic to the Next.js frontend.
 import json
 import logging
 import math
+import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -35,6 +37,7 @@ from forecaster import (
     load_term_enrollments,
     analyze_admits_registration,
     normalize_demand_metric,
+    _load_admits_rows,
     _post_rollout_prior_same_season_codes,
 )
 from adjustments import (
@@ -976,17 +979,48 @@ async def import_data_file(file: UploadFile = File(...), kind: str = Form("maste
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     content = await file.read()
-    cfg = _read_disk_config()
+
     if kind == "admits":
         dest = DATA_DIR / ("Admits" + suffix)
-        dest.write_bytes(content)
-        cfg["admitsFile"] = f"Data/{dest.name}"
+        config_key = "admitsFile"
     else:
         dest = DATA_DIR / ("Master Schedule of Classes" + suffix)
-        dest.write_bytes(content)
-        # Point the active config at the imported schedule so the forecast finds
-        # it regardless of extension (.xlsx vs .csv).
-        cfg["enrollment_source"] = f"Data/{dest.name}"
+        config_key = "enrollment_source"
+
+    # Stage the upload next to the destination (same filesystem, so the final
+    # os.replace is atomic), validate it with the real loader, and only then
+    # touch the live file. A wrong or corrupt upload must never clobber a
+    # known-good data file or repoint the config at unreadable data.
+    tmp = DATA_DIR / (".import_tmp_" + dest.name)
+    try:
+        tmp.write_bytes(content)
+        if kind == "admits":
+            rows, _ = _load_admits_rows(tmp)
+            if not rows:
+                raise HTTPException(
+                    status_code=422,
+                    detail="The uploaded admits file could not be read. Export the "
+                           "PZSAAPF report as .xlsx and try again; the previous "
+                           "admits file was left untouched.",
+                )
+        else:
+            if not get_available_terms(tmp):
+                raise HTTPException(
+                    status_code=422,
+                    detail="The uploaded file contains no readable TERM data, so it "
+                           "does not look like a PZSMSCP Master Schedule export. The "
+                           "previous Master Schedule was left untouched.",
+                )
+        if dest.exists():
+            shutil.copy2(dest, dest.with_name(dest.name + ".bak"))
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    # Point the active config at the imported file so the forecast finds it
+    # regardless of extension (.xlsx vs .csv).
+    cfg = _read_disk_config()
+    cfg[config_key] = f"Data/{dest.name}"
     _write_disk_config(cfg)
 
     return {"success": True, "stored_as": dest.name, "kind": kind, "data_dir": str(DATA_DIR)}
