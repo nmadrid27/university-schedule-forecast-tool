@@ -140,6 +140,34 @@ class TestEnsembleEndpoint:
             r = client.post("/api/forecast/ensemble", json={})
         assert r.status_code == 404
 
+    def test_cv_mape_reports_mape_metric_from_optimizer(self):
+        """cvMape must be computed with the mape metric; reporting the
+        optimizer's default RMSE (seat units) under a Mape label misstates
+        accuracy as a percentage."""
+        captured = {}
+
+        def spy_optimizer(df_ts, forecast_fns, **kwargs):
+            captured.update(kwargs)
+            return {"ols": 0.4, "ets": 0.35, "arima": 0.25}, 12.5
+
+        with ExitStack() as stack:
+            for p in self._patches():
+                stack.enter_context(p)
+            # Override the 6-quarter default: optimization needs >= 8 points.
+            stack.enter_context(patch(
+                "forecast_tool.data.loaders.load_historical_data",
+                return_value=_make_hist_df(9)))
+            stack.enter_context(patch(
+                "forecast_tool.forecasting.ensemble.optimize_ensemble_weights",
+                side_effect=spy_optimizer))
+            body = client.post(
+                "/api/forecast/ensemble",
+                json={"optimize_weights": True},
+            ).json()
+
+        assert captured.get("metric") == "mape"
+        assert body["summary"]["cvMape"] == 12.5
+
     def test_buffer_percent_accepts_camel_case_config_key(self):
         with ExitStack() as stack:
             for p in self._patches():

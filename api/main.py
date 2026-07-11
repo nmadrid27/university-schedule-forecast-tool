@@ -1234,7 +1234,8 @@ def run_ensemble_forecast(request: EnsembleRequest):
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
                         weights_used, best_error = optimize_ensemble_weights(
-                            df_ts, forecast_fns, min_train_size=4, horizon=1, step=1
+                            df_ts, forecast_fns, min_train_size=4, horizon=1, step=1,
+                            metric="mape",
                         )
                     cv_mape = best_error if best_error != float("inf") else None
                 except (ValueError, Exception):
