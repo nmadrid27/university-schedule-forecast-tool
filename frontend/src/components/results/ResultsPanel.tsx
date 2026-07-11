@@ -88,6 +88,13 @@ export function ResultsPanel({
                         onRemove={onRemoveAdjustment}
                     />
                 )}
+                {summary.warnings && summary.warnings.length > 0 && (
+                    <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+                        {summary.warnings.map((warning) => (
+                            <p key={warning}>{warning}</p>
+                        ))}
+                    </div>
+                )}
                 <MetricsCards summary={summary} />
                 <Separator className="mt-4" />
             </div>

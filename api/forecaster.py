@@ -446,6 +446,34 @@ def parse_number(value: str) -> float:
         return 0.0
 
 
+def normalize_demand_metric(metric: Optional[str]) -> str:
+    """Return a supported enrollment metric name.
+
+    ``actual`` is the default because it matches the existing behavior.
+    ``max`` lets planners forecast scheduled seats instead of enrolled seats.
+    ``actual_plus_waitlist`` treats waitlisted students as constrained demand.
+    """
+    value = (metric or "actual").strip().lower()
+    if value in {"actual", "act", "act_enr"}:
+        return "actual"
+    if value in {"max", "max_enr", "scheduled", "capacity"}:
+        return "max"
+    if value in {"actual_plus_waitlist", "act_plus_waitlist", "waitlist", "demand"}:
+        return "actual_plus_waitlist"
+    return "actual"
+
+
+def _metric_enrollment(getter, demand_metric: Optional[str]) -> float:
+    """Read the selected demand metric from a row-like getter."""
+    metric = normalize_demand_metric(demand_metric)
+    if metric == "max":
+        value = getter("MAX ENR")
+        return parse_number(value if value is not None else getter("ACT ENR"))
+    if metric == "actual_plus_waitlist":
+        return parse_number(getter("ACT ENR")) + parse_number(getter("WL ACT ENR"))
+    return parse_number(getter("ACT ENR"))
+
+
 def load_crosswalk(crosswalk_path: Path) -> Dict[str, str]:
     """Load legacy→FOUN course code mappings from the crosswalk CSV.
 
@@ -465,24 +493,63 @@ def load_crosswalk(crosswalk_path: Path) -> Dict[str, str]:
     return mapping
 
 
-def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
-    """Extract FOUN course demand from accepted applicants xlsx (PZSAAPF-SL31).
-
-    Reads column U (Currently Registered Courses) for each student.
-    Campus M → SAVANNAH, O → SCADNOW. Returns {campus: {foun_course: count}}.
-    Returns empty dict if file is missing or unreadable.
-    """
+def _load_admits_rows(path: Path) -> Tuple[List[Tuple], Dict[str, int]]:
+    """Return data rows and useful column indices from a PZSAAPF xlsx file."""
     if not path.is_file():
-        return {}
+        return [], {}
     try:
         import openpyxl
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
     except Exception:
+        return [], {}
+
+    header: Dict[str, int] = {}
+    data_start = 0
+    for idx, row in enumerate(rows):
+        cells = [str(c).strip().lower() if c is not None else "" for c in row]
+        if "student id" in cells:
+            for i, cell in enumerate(cells):
+                if cell:
+                    header[cell] = i
+            data_start = idx + 1
+            break
+
+    if not header:
+        # Legacy fallback: column M is campus and column U is registered courses.
+        header = {"campus": 12, "currently registered courses (no wl)": 20}
+        data_start = 0
+
+    return rows[data_start:], header
+
+
+def _admit_header_index(header: Dict[str, int], *names: str, fallback: int) -> int:
+    for name in names:
+        if name in header:
+            return header[name]
+    return fallback
+
+
+def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
+    """Extract FOUN course demand from accepted applicants xlsx (PZSAAPF-SL31).
+
+    Reads the "Currently Registered Courses (NO WL)" column for each student.
+    Campus M → SAVANNAH, O → SCADNOW. Returns {campus: {foun_course: count}}.
+    Returns empty dict if file is missing or unreadable.
+    """
+    rows, header = _load_admits_rows(path)
+    if not rows:
         return {}
 
     CAMPUS_MAP = {"M": "SAVANNAH", "O": "SCADNOW"}
+    campus_idx = _admit_header_index(header, "campus", fallback=12)
+    courses_idx = _admit_header_index(
+        header,
+        "currently registered courses (no wl)",
+        "currently registered courses",
+        fallback=20,
+    )
     result: Dict[str, DefaultDict] = {
         "SAVANNAH": defaultdict(int),
         "SCADNOW": defaultdict(int),
@@ -491,19 +558,76 @@ def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
     for row in rows:
         if not row or row[0] is None:
             continue
-        if str(row[0]).strip() == "Student ID":
-            continue  # skip header row
-        campus_code = str(row[12]).strip() if len(row) > 12 and row[12] else ""
+        campus_code = str(row[campus_idx]).strip() if len(row) > campus_idx and row[campus_idx] else ""
         campus = CAMPUS_MAP.get(campus_code)
         if not campus:
             continue
-        reg_courses = row[20] if len(row) > 20 else None
+        reg_courses = row[courses_idx] if len(row) > courses_idx else None
         if not reg_courses:
             continue
         for code in FOUN_CODE_RE.findall(str(reg_courses)):
             result[campus][f"FOUN {code}"] += 1
 
     return {k: dict(v) for k, v in result.items()}
+
+
+def analyze_admits_registration(path: Path) -> Dict:
+    """Return registration maturity diagnostics for an admits report.
+
+    The admits report is only useful for intro-course demand once enough admits
+    have registered. A low FOUN-registration rate usually means the snapshot was
+    pulled too early, so FOUN 110/111 will be undercounted.
+    """
+    rows, header = _load_admits_rows(path)
+    if not rows:
+        return {}
+
+    CAMPUS_MAP = {"M": "SAVANNAH", "O": "SCADNOW"}
+    campus_idx = _admit_header_index(header, "campus", fallback=12)
+    courses_idx = _admit_header_index(
+        header,
+        "currently registered courses (no wl)",
+        "currently registered courses",
+        fallback=20,
+    )
+
+    by_campus: Dict[str, Dict[str, float]] = {
+        "SAVANNAH": {"total": 0, "registered_any": 0, "registered_foun": 0},
+        "SCADNOW": {"total": 0, "registered_any": 0, "registered_foun": 0},
+    }
+
+    for row in rows:
+        if not row or row[0] is None:
+            continue
+        campus_code = str(row[campus_idx]).strip() if len(row) > campus_idx and row[campus_idx] else ""
+        campus = CAMPUS_MAP.get(campus_code)
+        if not campus:
+            continue
+        by_campus[campus]["total"] += 1
+        reg_courses = row[courses_idx] if len(row) > courses_idx else None
+        reg_text = str(reg_courses or "").strip()
+        if reg_text:
+            by_campus[campus]["registered_any"] += 1
+        if FOUN_CODE_RE.search(reg_text):
+            by_campus[campus]["registered_foun"] += 1
+
+    warnings: List[str] = []
+    for campus, stats in by_campus.items():
+        total = stats["total"]
+        if total <= 0:
+            continue
+        any_rate = stats["registered_any"] / total
+        foun_rate = stats["registered_foun"] / total
+        stats["registered_any_rate"] = round(any_rate, 3)
+        stats["registered_foun_rate"] = round(foun_rate, 3)
+        if total >= 20 and foun_rate < 0.50:
+            label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow"}.get(campus, campus)
+            warnings.append(
+                f"Admits snapshot may be early for {label}: only {foun_rate:.0%} "
+                f"of admits are registered for a FOUN course. FOUN 110/111 demand may be low."
+            )
+
+    return {"by_campus": by_campus, "warnings": warnings}
 
 
 def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]]]:
@@ -644,6 +768,7 @@ def _load_master_schedule_xlsx(
     path: Path,
     term_code: Optional[str] = None,
     crosswalk: Optional[Dict[str, str]] = None,
+    demand_metric: Optional[str] = "actual",
 ) -> Dict[Tuple[str, str], float]:
     """Load enrollment totals from a PZSMSCP Master Schedule xlsx (Cognos export).
 
@@ -697,17 +822,18 @@ def _load_master_schedule_xlsx(
         crn = _cell("CRN")
         if crn is None:
             continue
-        crn_key = str(crn).strip()
-        if not crn_key:
-            continue
-
-        # De-duplicate co-taught rows: only count each CRN once.
-        if crn_key in seen_crns:
+        crn_raw = str(crn).strip()
+        if not crn_raw:
             continue
 
         term_value = str(_cell("TERM") or "").strip()
         if term_code and term_value != str(term_code):
             # Skip but don't mark as seen — future term filters may differ.
+            continue
+
+        # De-duplicate co-taught rows: only count each term+CRN once.
+        crn_key = f"{term_value}:{crn_raw}"
+        if crn_key in seen_crns:
             continue
 
         subj = str(_cell("SUBJ") or "").strip().upper()
@@ -720,7 +846,7 @@ def _load_master_schedule_xlsx(
             seen_crns.add(crn_key)
             continue
 
-        enrollment = parse_number(_cell("ACT ENR"))
+        enrollment = _metric_enrollment(_cell, demand_metric)
         campus_code = str(_cell("CAMPUS") or "").strip().upper()
         campus = _normalize_campus_code(campus_code)
         if campus is None:
@@ -737,6 +863,7 @@ def load_term_enrollments(
     path: Path,
     term_code: Optional[str] = None,
     crosswalk: Optional[Dict[str, str]] = None,
+    demand_metric: Optional[str] = "actual",
 ) -> Dict[Tuple[str, str], float]:
     """Load enrollment totals per (campus, course) from a term CSV, Master Schedule CSV, or Master Schedule xlsx.
 
@@ -750,7 +877,12 @@ def load_term_enrollments(
             equivalents so feeder enrollment is not silently dropped.
     """
     if path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
-        return _load_master_schedule_xlsx(path, term_code=term_code, crosswalk=crosswalk)
+        return _load_master_schedule_xlsx(
+            path,
+            term_code=term_code,
+            crosswalk=crosswalk,
+            demand_metric=demand_metric,
+        )
 
     totals: Dict[Tuple[str, str], float] = defaultdict(float)
     xwalk = crosswalk or {}
@@ -759,6 +891,7 @@ def load_term_enrollments(
         fieldnames = [name or "" for name in (reader.fieldnames or [])]
         has_course = "Course" in fieldnames and "Enrollment" in fieldnames
         has_master = "SUBJ" in fieldnames and "CRS NUMBER" in fieldnames and "ACT ENR" in fieldnames
+        seen_master_crns: set = set()
         for row in reader:
             if has_course:
                 course = (row.get("Course") or "").strip()
@@ -781,6 +914,13 @@ def load_term_enrollments(
                 term_value = str(row.get("TERM") or "").strip()
                 if term_code and term_value != str(term_code):
                     continue
+                crn_key = f"{term_value}:{str(row.get('CRN') or '').strip()}"
+                if crn_key.endswith(":"):
+                    crn_key = ""
+                if crn_key:
+                    if crn_key in seen_master_crns:
+                        continue
+                    seen_master_crns.add(crn_key)
                 subj = (row.get("SUBJ") or "").strip().upper()
                 crs = (row.get("CRS NUMBER") or "").strip()
                 if not crs:
@@ -789,7 +929,7 @@ def load_term_enrollments(
                 course = xwalk.get(raw_course, raw_course)
                 if not course.startswith("FOUN "):
                     continue
-                enrollment = parse_number(row.get("ACT ENR"))
+                enrollment = _metric_enrollment(row.get, demand_metric)
                 campus_code = (row.get("CAMPUS") or "").strip().upper()
                 campus = _normalize_campus_code(campus_code)
                 if campus is None:
@@ -911,6 +1051,7 @@ def run_sequence_forecast(
     buffer_percent: float = 0.0,
     admits_path: Optional[Path] = None,
     enrollment_by_major_path: Optional[Path] = None,
+    demand_metric: Optional[str] = "actual",
 ) -> List[Dict]:
     """Run the full sequence-based forecast pipeline for any target quarter.
 
@@ -953,8 +1094,18 @@ def run_sequence_forecast(
     crosswalk_path = enrollment_source_path.parent / "sequence_crosswalk_template.csv"
     crosswalk = load_crosswalk(crosswalk_path)
 
-    farther_enrollments = load_term_enrollments(enrollment_source_path, farther["term_code"], crosswalk=crosswalk)
-    closer_enrollments = load_term_enrollments(enrollment_source_path, closer["term_code"], crosswalk=crosswalk)
+    farther_enrollments = load_term_enrollments(
+        enrollment_source_path,
+        farther["term_code"],
+        crosswalk=crosswalk,
+        demand_metric=demand_metric,
+    )
+    closer_enrollments = load_term_enrollments(
+        enrollment_source_path,
+        closer["term_code"],
+        crosswalk=crosswalk,
+        demand_metric=demand_metric,
+    )
 
     farther_multiplier = progression_rate ** farther["multiplier_exp"]
     closer_multiplier = progression_rate ** closer["multiplier_exp"]
@@ -1042,6 +1193,7 @@ def run_sameseason_forecast(
     capacity: int = 20,
     buffer_percent: float = 0.0,
     crosswalk: Optional[Dict[str, str]] = None,
+    demand_metric: Optional[str] = "actual",
 ) -> List[Dict]:
     """Forecast each FOUN course from its own prior same-season enrollment.
 
@@ -1073,7 +1225,10 @@ def run_sameseason_forecast(
     series: DefaultDict[Tuple[str, str], Dict[int, float]] = defaultdict(dict)
     for code in prior_codes:
         for (campus, course), seats in load_term_enrollments(
-            master_schedule_path, code, crosswalk=crosswalk
+            master_schedule_path,
+            code,
+            crosswalk=crosswalk,
+            demand_metric=demand_metric,
         ).items():
             if str(course).startswith("FOUN"):
                 series[(campus, course)][int(code[:4])] = seats
@@ -1100,7 +1255,10 @@ def run_sameseason_forecast(
         })
 
     for (campus, course), _seats in load_term_enrollments(
-        master_schedule_path, target_code, crosswalk=crosswalk
+        master_schedule_path,
+        target_code,
+        crosswalk=crosswalk,
+        demand_metric=demand_metric,
     ).items():
         if str(course).startswith("FOUN") and (campus, course) not in series:
             rows.append({

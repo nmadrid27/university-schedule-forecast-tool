@@ -9,7 +9,7 @@ def _patch_terms(monkeypatch, by_code):
     """Make load_term_enrollments return canned {(campus,course): seats} per term code."""
     calls = []
 
-    def fake(path, term_code, crosswalk=None):
+    def fake(path, term_code, crosswalk=None, demand_metric="actual"):
         calls.append(term_code)
         return dict(by_code.get(term_code, {}))
 

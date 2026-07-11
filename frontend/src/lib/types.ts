@@ -29,6 +29,9 @@ export interface ParsedCommand {
   raw_message: string;
 }
 
+export type ForecastMethod = 'auto' | 'historical' | 'sequence';
+export type DemandMetric = 'actual' | 'max' | 'actual_plus_waitlist';
+
 export interface ForecastResult {
   course: string;
   campus: string;
@@ -37,6 +40,7 @@ export interface ForecastResult {
   change?: number;
   changePercent?: number;
   adjusted?: boolean;
+  anomalyFlag?: Record<string, unknown> | null;
 }
 
 export interface ForecastSummary {
@@ -47,6 +51,8 @@ export interface ForecastSummary {
   method: string;
   lastUpdated: Date;
   adjustmentsApplied?: number;
+  demandMetric?: DemandMetric;
+  warnings?: string[] | null;
 }
 
 export interface ForecastConfig {
@@ -55,6 +61,8 @@ export interface ForecastConfig {
   bufferPercent: number;
   quartersToForecast: number;
   term: string;
+  method: ForecastMethod;
+  demandMetric: DemandMetric;
   campus?: string;
 }
 

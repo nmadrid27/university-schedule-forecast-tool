@@ -138,7 +138,7 @@ describe('useChat — sendMessage', () => {
     await act(async () => { await result.current.sendMessage('forecast'); });
     expect(result.current.isLoading).toBe(false);
     const msgs = result.current.messages;
-    expect(msgs[msgs.length - 1].content).toMatch(/backend server/i);
+    expect(msgs[msgs.length - 1].content).toMatch(/forecast request failed: network error/i);
   });
 });
 

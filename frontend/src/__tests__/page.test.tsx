@@ -51,12 +51,14 @@ vi.mock('@/hooks/useAdjustments', () => ({
 vi.mock('@/lib/api', () => ({
   api: {
     getConfig: vi.fn(),
+    getTerms: vi.fn(),
     updateConfig: vi.fn(),
   },
 }));
 
 const mockApi = api as {
   getConfig: ReturnType<typeof vi.fn>;
+  getTerms: ReturnType<typeof vi.fn>;
   updateConfig: ReturnType<typeof vi.fn>;
 };
 
@@ -68,6 +70,14 @@ beforeEach(() => {
     progressionRate: 0.95,
     bufferPercent: 10,
     quartersToForecast: 2,
+    defaultTerm: 'Spring 2026',
+    method: 'auto',
+    demandMetric: 'actual',
+  });
+  mockApi.getTerms.mockResolvedValue({
+    available_terms: [],
+    forecastable_terms: [],
+    forecastable_by_method: { auto: [], historical: [], sequence: [] },
   });
   mockApi.updateConfig.mockResolvedValue({ success: true });
   // Stub browser APIs not implemented in jsdom
