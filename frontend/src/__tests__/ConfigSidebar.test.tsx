@@ -42,6 +42,19 @@ describe('ConfigSidebar', () => {
     expect(onConfigChange).toHaveBeenCalledWith({ term: 'Fall 2026' });
   });
 
+  it('falls back to static term options when the API returns empty term lists', () => {
+    // Fresh install: /api/terms succeeds but no Master Schedule is imported,
+    // so every per-method list is an empty array (not undefined).
+    render(
+      <ConfigSidebar
+        config={baseConfig}
+        termsByMethod={{ auto: [], historical: [], sequence: [] }}
+      />
+    );
+    const select = screen.getByRole('combobox', { name: /forecast term/i });
+    expect(select).toContainHTML('Fall 2026');
+  });
+
   it('calls onConfigChange with reset defaults when Reset button is clicked', async () => {
     const user = userEvent.setup();
     const onConfigChange = vi.fn();

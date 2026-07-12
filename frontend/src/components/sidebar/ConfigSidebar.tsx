@@ -58,7 +58,12 @@ export function ConfigSidebar({
     };
 
     const method = config.method ?? 'auto';
-    const optionsForMethod = termsByMethod[method] ?? termsByMethod.auto ?? TERM_OPTIONS;
+    // An empty array from /api/terms (fresh install, nothing imported yet) is
+    // not nullish; fall through to the next non-empty list so the dropdown
+    // never collapses to a single term.
+    const firstNonEmpty = (...lists: (TermOption[] | undefined)[]) =>
+        lists.find((l) => l && l.length > 0);
+    const optionsForMethod = firstNonEmpty(termsByMethod[method], termsByMethod.auto) ?? TERM_OPTIONS;
     const termOptions = optionsForMethod.some((t) => t.label === config.term)
         ? optionsForMethod
         : [{ termCode: config.term, label: config.term }, ...optionsForMethod];
