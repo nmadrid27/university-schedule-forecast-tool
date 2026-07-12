@@ -1,5 +1,19 @@
 // TypeScript types for the Forecast Tool frontend
 
+// A persisted adjustment as the API returns it (adjustment CRUD endpoints
+// and chat metadata share this exact shape).
+export interface AdjustmentRecord {
+  id: string;
+  type: string;
+  parameter?: string | null;
+  operation?: string | null;
+  value: number;
+  scope: { course?: string | null; campus?: string | null };
+  reason: string;
+  enabled: boolean;
+  source: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -7,17 +21,7 @@ export interface Message {
   timestamp: Date;
   metadata?: {
     parsedCommand?: ParsedCommand;
-    adjustments?: Array<{
-      id: string;
-      type: string;
-      parameter?: string | null;
-      operation?: string | null;
-      value: number;
-      scope: { course?: string | null; campus?: string | null };
-      reason: string;
-      enabled: boolean;
-      source: string;
-    }>;
+    adjustments?: AdjustmentRecord[];
     llm_used?: boolean;
   };
 }
@@ -64,6 +68,18 @@ export interface ForecastConfig {
   method: ForecastMethod;
   demandMetric: DemandMetric;
   campus?: string;
+}
+
+// Shape of GET/PUT /api/config. `term` in ForecastConfig is client-side UI
+// state; the server persists defaultTerm instead.
+export interface ApiForecastConfig {
+  capacity: number;
+  progressionRate: number;
+  bufferPercent: number;
+  quartersToForecast: number;
+  defaultTerm: string;
+  method: ForecastMethod;
+  demandMetric: DemandMetric;
 }
 
 export interface ChatResponse {

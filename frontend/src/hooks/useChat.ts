@@ -9,6 +9,22 @@ function generateId(): string {
     return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
+// Build the /api/forecast request body. method and demandMetric travel
+// top-level only: the backend reads request-level values before the config
+// dict, so repeating them inside config invites silent drift.
+function buildForecastRequest(term: string, config?: ForecastConfig) {
+    return {
+        term,
+        method: config?.method ?? ('auto' as const),
+        demandMetric: config?.demandMetric ?? ('actual' as const),
+        config: config ? {
+            capacity: config.capacity,
+            progressionRate: config.progressionRate,
+            bufferPercent: config.bufferPercent,
+        } : undefined,
+    };
+}
+
 export function useChat(config?: ForecastConfig) {
     const [messages, setMessages] = useState<Message[]>([
         {
@@ -59,18 +75,9 @@ export function useChat(config?: ForecastConfig) {
                 const parsedTerm = response.parsedCommand.parameters.term as string;
                 const forecastTerm = parsedTerm || config?.term || 'Spring 2026';
 
-                const forecastResponse = await api.runForecast({
-                    term: forecastTerm,
-                    method: config?.method ?? 'auto',
-                    demandMetric: config?.demandMetric ?? 'actual',
-                    config: config ? {
-                        capacity: config.capacity,
-                        progressionRate: config.progressionRate,
-                        bufferPercent: config.bufferPercent,
-                        method: config.method,
-                        demandMetric: config.demandMetric,
-                    } : undefined,
-                });
+                const forecastResponse = await api.runForecast(
+                    buildForecastRequest(forecastTerm, config)
+                );
 
                 setForecastResults(forecastResponse.results);
                 setForecastSummary({
@@ -125,18 +132,9 @@ export function useChat(config?: ForecastConfig) {
         const forecastTerm = term || config?.term || 'Spring 2026';
         setIsLoading(true);
         try {
-            const forecastResponse = await api.runForecast({
-                term: forecastTerm,
-                method: config?.method ?? 'auto',
-                demandMetric: config?.demandMetric ?? 'actual',
-                config: config ? {
-                    capacity: config.capacity,
-                    progressionRate: config.progressionRate,
-                    bufferPercent: config.bufferPercent,
-                    method: config.method,
-                    demandMetric: config.demandMetric,
-                } : undefined,
-            });
+            const forecastResponse = await api.runForecast(
+                buildForecastRequest(forecastTerm, config)
+            );
             setForecastResults(forecastResponse.results);
             setForecastSummary({
                 ...forecastResponse.summary,
