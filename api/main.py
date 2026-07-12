@@ -738,7 +738,10 @@ def run_forecast(request: ForecastRequest):
 @app.get("/api/adjustments/{term}")
 def get_adjustments(term: str):
     """List all adjustments for a term."""
-    ta = load_adjustments(DATA_DIR, term)
+    try:
+        ta = load_adjustments(DATA_DIR, term)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
 
 
@@ -758,21 +761,30 @@ def create_adjustment(term: str, request: AdjustmentRequest):
         reason=request.reason,
         source="manual",
     )
-    ta = add_adjustment(DATA_DIR, term, adj)
+    try:
+        ta = add_adjustment(DATA_DIR, term, adj)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustment": adj.model_dump()}
 
 
 @app.put("/api/adjustments/{term}/{adj_id}/toggle")
 def toggle_adj(term: str, adj_id: str):
     """Toggle an adjustment on/off."""
-    ta = toggle_adjustment(DATA_DIR, term, adj_id)
+    try:
+        ta = toggle_adjustment(DATA_DIR, term, adj_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
 
 
 @app.delete("/api/adjustments/{term}/{adj_id}")
 def delete_adjustment(term: str, adj_id: str):
     """Remove an adjustment."""
-    ta = remove_adjustment(DATA_DIR, term, adj_id)
+    try:
+        ta = remove_adjustment(DATA_DIR, term, adj_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
 
 
