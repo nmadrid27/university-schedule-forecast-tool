@@ -537,7 +537,7 @@ Backtest (Cognos OFF, buffer 0, no adjustments, admits ON, vs PZSMSCP ACT).
 
 Per-course: 12 rows moved; 9 moved toward ACT (largest: FOUN 113 SAV 731.4 -> 802.9
 vs ACT 1029; FOUN 112 SAV 463.6 -> 483.8 vs 653; FOUN 240 SAV 97.0 -> 106.5 vs 210).
-3 moved away: FOUN 220 SAV 464.0 -> 506.5 (vs ACT 262 — the known seq-map
+3 moved away: FOUN 220 SAV 464.0 -> 506.5 (vs ACT 262; the known seq-map
 over-routing, now slightly more visible), FOUN 220 NOW 57.7 -> 59.4 (vs 47), and
 FOUN 245 SAV 243.3 -> 257.6 (vs 249; from -2.3% to +3.5%). The fix is a correctness
 change, not tuning: it raises demand wherever inflated denominators were suppressing
