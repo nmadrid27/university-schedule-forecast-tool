@@ -35,6 +35,7 @@ from forecaster import (
     resolve_term_info,
     load_crosswalk,
     load_term_enrollments,
+    load_all_term_enrollments,
     analyze_admits_registration,
     normalize_demand_metric,
     _load_admits_rows,
@@ -626,13 +627,14 @@ def run_forecast(request: ForecastRequest):
             from forecast_tool.forecasting.ols_forecast import detect_anomaly
             _crosswalk = load_crosswalk(enrollment_source_path.parent / "sequence_crosswalk_template.csv")
             _campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
-            for _tc in get_available_terms(enrollment_source_path):
-                for (_campus, _course), _seats in load_term_enrollments(
-                    enrollment_source_path,
-                    _tc,
-                    crosswalk=_crosswalk,
-                    demand_metric=demand_metric,
-                ).items():
+            # Single pass over the Master Schedule; per-term calls re-parse
+            # the whole file once per term and dominate request latency.
+            for _tc, _totals in load_all_term_enrollments(
+                enrollment_source_path,
+                crosswalk=_crosswalk,
+                demand_metric=demand_metric,
+            ).items():
+                for (_campus, _course), _seats in _totals.items():
                     if str(_course).startswith("FOUN"):
                         _ols_historical.setdefault((_course, _campus_label.get(_campus, _campus)), {})[_tc] = int(_seats)
         except Exception:

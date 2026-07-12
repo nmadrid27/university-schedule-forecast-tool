@@ -464,9 +464,12 @@ def normalize_demand_metric(metric: Optional[str]) -> str:
     return "actual"
 
 
-def _metric_enrollment(getter, demand_metric: Optional[str]) -> float:
-    """Read the selected demand metric from a row-like getter."""
-    metric = normalize_demand_metric(demand_metric)
+def _metric_enrollment(getter, metric: str) -> float:
+    """Read the selected demand metric from a row-like getter.
+
+    ``metric`` must already be normalized via ``normalize_demand_metric``;
+    loaders normalize once per file, not once per row.
+    """
     if metric == "max":
         value = getter("MAX ENR")
         # CSV blank cells arrive as "" (xlsx blanks arrive as None); both mean
@@ -769,26 +772,73 @@ def _normalize_campus_code(code_upper: str) -> Optional[str]:
     return _MAP.get(code_upper)
 
 
-def _load_master_schedule_xlsx(
+def _process_master_row(
+    getter,
+    by_term: Dict[str, Dict[Tuple[str, str], float]],
+    seen_crns: set,
+    xwalk: Dict[str, str],
+    metric: str,
+    term_code: Optional[str],
+    has_crn_column: bool,
+) -> None:
+    """Accumulate one Master Schedule data row into ``by_term``.
+
+    Shared by the CSV and xlsx loaders so filtering and CRN-dedupe semantics
+    cannot drift between export formats. ``metric`` must be pre-normalized.
+    In a file that carries a CRN column, a row with a blank CRN is a Cognos
+    summary/continuation artifact and is skipped; files without a CRN column
+    (older exports) are counted row-by-row with no dedupe.
+    """
+    term_value = str(getter("TERM") or "").strip()
+    if term_code and term_value != str(term_code):
+        # Skip but don't mark as seen — future term filters may differ.
+        return
+    crn_key = None
+    if has_crn_column:
+        crn_raw = str(getter("CRN") or "").strip()
+        if not crn_raw:
+            return
+        # De-duplicate co-taught rows: only count each term+CRN once.
+        crn_key = f"{term_value}:{crn_raw}"
+        if crn_key in seen_crns:
+            return
+    subj = str(getter("SUBJ") or "").strip().upper()
+    crs = str(getter("CRS NUMBER") or "").strip()
+    if not crs:
+        # A continuation row with no course number must NOT mark its CRN as
+        # seen, or it suppresses the data-carrying row for the same CRN.
+        return
+    if crn_key:
+        seen_crns.add(crn_key)
+    raw_course = f"{subj} {crs}"
+    course = xwalk.get(raw_course, raw_course)
+    if not course.startswith("FOUN "):
+        return
+    campus = _normalize_campus_code(str(getter("CAMPUS") or "").strip().upper())
+    if campus is None:
+        return
+    term_totals = by_term.setdefault(term_value, defaultdict(float))
+    term_totals[(campus, course)] += _metric_enrollment(getter, metric)
+
+
+def _load_master_schedule_xlsx_by_term(
     path: Path,
-    term_code: Optional[str] = None,
     crosswalk: Optional[Dict[str, str]] = None,
     demand_metric: Optional[str] = "actual",
-) -> Dict[Tuple[str, str], float]:
-    """Load enrollment totals from a PZSMSCP Master Schedule xlsx (Cognos export).
+    term_code: Optional[str] = None,
+) -> Dict[str, Dict[Tuple[str, str], float]]:
+    """Single-pass load of a PZSMSCP xlsx, grouped by term code.
 
     Format expectations:
       - Single data sheet (typically named ``Page1``)
       - Rows 0-15 are Cognos metadata; the header row contains 'SCHOOL', 'CRN',
         'SUBJ', 'CRS NUMBER', 'TERM', 'CAMPUS', 'ACT ENR' (located by name)
       - Multiple rows per CRN are common (one per instructor when co-taught);
-        rows are de-duplicated by CRN before aggregation to avoid multiplying
-        enrollment by instructor count.
-      - TERM values: SCAD term codes ('202610', '202620', '202630', ...)
-      - CAMPUS values: 'SAV', 'NOW', 'ATL'
+        rows are de-duplicated by term+CRN before aggregation.
     """
-    totals: Dict[Tuple[str, str], float] = defaultdict(float)
+    by_term: Dict[str, Dict[Tuple[str, str], float]] = {}
     xwalk = crosswalk or {}
+    metric = normalize_demand_metric(demand_metric)
 
     try:
         import openpyxl
@@ -802,6 +852,7 @@ def _load_master_schedule_xlsx(
     # column names. Cognos puts ~15 rows of report metadata above the header.
     header_idx: Dict[str, int] = {}
     in_data = False
+    has_crn = False
     seen_crns: set = set()
 
     for row in ws.iter_rows(values_only=True):
@@ -814,53 +865,37 @@ def _load_master_schedule_xlsx(
                 for i, c in enumerate(cells):
                     if c:
                         header_idx[c] = i
+                has_crn = "CRN" in header_idx
                 in_data = True
             continue
 
-        # Data row
         def _cell(name: str):
             i = header_idx.get(name)
             if i is None or i >= len(row):
                 return None
             return row[i]
 
-        crn = _cell("CRN")
-        if crn is None:
-            continue
-        crn_raw = str(crn).strip()
-        if not crn_raw:
-            continue
+        _process_master_row(_cell, by_term, seen_crns, xwalk, metric, term_code, has_crn)
 
-        term_value = str(_cell("TERM") or "").strip()
-        if term_code and term_value != str(term_code):
-            # Skip but don't mark as seen — future term filters may differ.
-            continue
+    return by_term
 
-        # De-duplicate co-taught rows: only count each term+CRN once.
-        crn_key = f"{term_value}:{crn_raw}"
-        if crn_key in seen_crns:
-            continue
 
-        subj = str(_cell("SUBJ") or "").strip().upper()
-        crs = str(_cell("CRS NUMBER") or "").strip()
-        if not crs:
-            continue
-        raw_course = f"{subj} {crs}"
-        course = xwalk.get(raw_course, raw_course)
-        if not course.startswith("FOUN "):
-            seen_crns.add(crn_key)
-            continue
-
-        enrollment = _metric_enrollment(_cell, demand_metric)
-        campus_code = str(_cell("CAMPUS") or "").strip().upper()
-        campus = _normalize_campus_code(campus_code)
-        if campus is None:
-            seen_crns.add(crn_key)
-            continue
-
-        totals[(campus, course)] += enrollment
-        seen_crns.add(crn_key)
-
+def _load_master_schedule_xlsx(
+    path: Path,
+    term_code: Optional[str] = None,
+    crosswalk: Optional[Dict[str, str]] = None,
+    demand_metric: Optional[str] = "actual",
+) -> Dict[Tuple[str, str], float]:
+    """Load flat enrollment totals from a PZSMSCP Master Schedule xlsx."""
+    by_term = _load_master_schedule_xlsx_by_term(
+        path, crosswalk=crosswalk, demand_metric=demand_metric, term_code=term_code
+    )
+    if term_code:
+        return by_term.get(str(term_code), {})
+    totals: Dict[Tuple[str, str], float] = defaultdict(float)
+    for term_totals in by_term.values():
+        for key, seats in term_totals.items():
+            totals[key] += seats
     return totals
 
 
@@ -889,61 +924,93 @@ def load_term_enrollments(
             demand_metric=demand_metric,
         )
 
-    totals: Dict[Tuple[str, str], float] = defaultdict(float)
+    by_term = _load_master_schedule_csv_by_term(
+        path, crosswalk=crosswalk, demand_metric=demand_metric, term_code=term_code
+    )
+    if by_term is not None:
+        if term_code:
+            return by_term.get(str(term_code), {})
+        totals: Dict[Tuple[str, str], float] = defaultdict(float)
+        for term_totals in by_term.values():
+            for key, seats in term_totals.items():
+                totals[key] += seats
+        return totals
+
+    # Legacy per-term CSV: 'Course' / 'Enrollment' columns, no TERM column.
+    totals = defaultdict(float)
     xwalk = crosswalk or {}
     with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         fieldnames = [name or "" for name in (reader.fieldnames or [])]
         has_course = "Course" in fieldnames and "Enrollment" in fieldnames
-        has_master = "SUBJ" in fieldnames and "CRS NUMBER" in fieldnames and "ACT ENR" in fieldnames
-        seen_master_crns: set = set()
+        if not has_course:
+            return totals
         for row in reader:
-            if has_course:
-                course = (row.get("Course") or "").strip()
-                course = xwalk.get(course, course)
-                if not course.startswith("FOUN "):
-                    continue
-                enrollment = parse_number(row.get("Enrollment"))
-                room = (row.get("Room") or "").strip().upper()
-                section = (row.get("Section #") or "").strip().upper()
-                # Also check the explicit Campus column when present (e.g. "SCADnow online")
-                campus_col = (row.get("Campus") or "").strip().lower()
-                if campus_col:
-                    campus = _normalize_campus_label(campus_col)
-                else:
-                    campus = "SCADNOW" if (room == "OLNOW" or section.startswith("N")) else "SAVANNAH"
-                totals[(campus, course)] += enrollment
+            course = (row.get("Course") or "").strip()
+            course = xwalk.get(course, course)
+            if not course.startswith("FOUN "):
                 continue
-
-            if has_master:
-                term_value = str(row.get("TERM") or "").strip()
-                if term_code and term_value != str(term_code):
-                    continue
-                crn_key = f"{term_value}:{str(row.get('CRN') or '').strip()}"
-                if crn_key.endswith(":"):
-                    crn_key = ""
-                if crn_key and crn_key in seen_master_crns:
-                    continue
-                subj = (row.get("SUBJ") or "").strip().upper()
-                crs = (row.get("CRS NUMBER") or "").strip()
-                if not crs:
-                    # Mirror the xlsx loader: a continuation row with no course
-                    # number must NOT mark its CRN as seen, or it suppresses
-                    # the data-carrying row for the same CRN.
-                    continue
-                if crn_key:
-                    seen_master_crns.add(crn_key)
-                raw_course = f"{subj} {crs}"
-                course = xwalk.get(raw_course, raw_course)
-                if not course.startswith("FOUN "):
-                    continue
-                enrollment = _metric_enrollment(row.get, demand_metric)
-                campus_code = (row.get("CAMPUS") or "").strip().upper()
-                campus = _normalize_campus_code(campus_code)
-                if campus is None:
-                    continue  # unrecognized campus
-                totals[(campus, course)] += enrollment
+            enrollment = parse_number(row.get("Enrollment"))
+            room = (row.get("Room") or "").strip().upper()
+            section = (row.get("Section #") or "").strip().upper()
+            # Also check the explicit Campus column when present (e.g. "SCADnow online")
+            campus_col = (row.get("Campus") or "").strip().lower()
+            if campus_col:
+                campus = _normalize_campus_label(campus_col)
+            else:
+                campus = "SCADNOW" if (room == "OLNOW" or section.startswith("N")) else "SAVANNAH"
+            totals[(campus, course)] += enrollment
     return totals
+
+
+def _load_master_schedule_csv_by_term(
+    path: Path,
+    crosswalk: Optional[Dict[str, str]] = None,
+    demand_metric: Optional[str] = "actual",
+    term_code: Optional[str] = None,
+) -> Optional[Dict[str, Dict[Tuple[str, str], float]]]:
+    """Single-pass load of a Master Schedule CSV, grouped by term code.
+
+    Returns None when the file is not in Master Schedule format (no SUBJ /
+    CRS NUMBER / ACT ENR columns), so the caller can fall back to the legacy
+    per-term CSV format.
+    """
+    xwalk = crosswalk or {}
+    metric = normalize_demand_metric(demand_metric)
+    with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
+        reader = csv.DictReader(f)
+        fieldnames = [name or "" for name in (reader.fieldnames or [])]
+        has_master = "SUBJ" in fieldnames and "CRS NUMBER" in fieldnames and "ACT ENR" in fieldnames
+        if not has_master:
+            return None
+        has_crn = "CRN" in fieldnames
+        by_term: Dict[str, Dict[Tuple[str, str], float]] = {}
+        seen_crns: set = set()
+        for row in reader:
+            _process_master_row(row.get, by_term, seen_crns, xwalk, metric, term_code, has_crn)
+        return by_term
+
+
+def load_all_term_enrollments(
+    path: Path,
+    crosswalk: Optional[Dict[str, str]] = None,
+    demand_metric: Optional[str] = "actual",
+) -> Dict[str, Dict[Tuple[str, str], float]]:
+    """Load every term's (campus, course) totals from a Master Schedule in ONE pass.
+
+    Use this instead of calling ``load_term_enrollments`` once per term when a
+    full per-term history is needed (e.g. anomaly-detection series): each
+    per-term call re-parses the whole file. Legacy per-term CSVs carry no TERM
+    column and return {}.
+    """
+    if path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        return _load_master_schedule_xlsx_by_term(
+            path, crosswalk=crosswalk, demand_metric=demand_metric
+        )
+    by_term = _load_master_schedule_csv_by_term(
+        path, crosswalk=crosswalk, demand_metric=demand_metric
+    )
+    return by_term if by_term is not None else {}
 
 
 def compute_sections(seats: float, capacity: int) -> int:
