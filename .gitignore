@@ -37,3 +37,5 @@ Data/.~lock*
 # Local-only docs (see CLAUDE.md: PRD is not in git)
 docs/PRD.md
 MEMORY.md
+docs/BRIEFING.md
+logs/
