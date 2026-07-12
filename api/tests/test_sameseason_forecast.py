@@ -74,3 +74,17 @@ def test_post_rollout_prior_codes():
     assert priors("Fall 2026") == ["202610"]                # Fall 2025
     assert priors("Spring 2027") == ["202630"]              # Spring 2026
     assert priors("Fall 2027") == ["202710", "202610"]      # most recent first
+
+
+def test_trend_extrapolates_to_target_year_across_gap(monkeypatch):
+    """With Fall 2025/2026 history (codes 202610/202710) and later Falls
+    missing, forecasting Fall 2029 (code 203010) must extrapolate the 20/year
+    trend three academic years past the last prior (120 + 3*20 = 180), not one
+    step past it (140 labeled as if it were the target)."""
+    _patch_terms(monkeypatch, {
+        "202610": {("SAVANNAH", "FOUN 110"): 100},
+        "202710": {("SAVANNAH", "FOUN 110"): 120},
+    })
+    rows = F.run_sameseason_forecast(Path("x.csv"), "Fall 2029", capacity=20, buffer_percent=0.0, crosswalk={})
+    row = next(r for r in rows if r["course"] == "FOUN 110")
+    assert round(row["projected_seats"]) == 180

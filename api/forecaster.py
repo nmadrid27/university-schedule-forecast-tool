@@ -406,7 +406,10 @@ def load_sequence_mappings(
                 # over-dilute sibling programs sharing the same feeder.
                 for closer_course, closer_weight in closer_raw:
                     mappings[campus]["closer_source_totals"][closer_course] += closer_weight * row_weight
-                for farther_course, farther_weight in farther_courses:
+                # Accumulate from the UNFILTERED farther courses, mirroring the
+                # closer side: a non-anchor co-requisite still dilutes its own
+                # denominator, because its cohort is routed via the anchor.
+                for farther_course, farther_weight in farther_raw:
                     mappings[campus]["farther_source_totals"][farther_course] += farther_weight * row_weight
                 if not target_courses:
                     continue  # nothing else to build for this campus row
@@ -1246,7 +1249,10 @@ def run_sameseason_forecast(
         pts = sorted(year_map.items())
         if len(pts) >= 2:
             df = pd.DataFrame({"ds": [str(y) for y, _ in pts], "y": [e for _, e in pts]})
-            fc = forecast_ols(df, periods=1)
+            # Extrapolate to the target's academic year, so a missing
+            # intermediate prior does not shift the prediction a year short.
+            steps = max(1, int(target_code[:4]) - int(pts[-1][0]))
+            fc = forecast_ols(df, periods=steps)
             value = float(fc.iloc[-1]["yhat"]) if not fc.empty else float(pts[-1][1])
         else:
             value = float(pts[-1][1])
