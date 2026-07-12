@@ -140,6 +140,65 @@ class TestEnsembleEndpoint:
             r = client.post("/api/forecast/ensemble", json={})
         assert r.status_code == 404
 
+    def test_cv_mape_reports_mape_metric_from_optimizer(self):
+        """cvMape must be computed with the mape metric; reporting the
+        optimizer's default RMSE (seat units) under a Mape label misstates
+        accuracy as a percentage."""
+        captured = {}
+
+        def spy_optimizer(df_ts, forecast_fns, **kwargs):
+            captured.update(kwargs)
+            return {"ols": 0.4, "ets": 0.35, "arima": 0.25}, 12.5
+
+        with ExitStack() as stack:
+            for p in self._patches():
+                stack.enter_context(p)
+            # Override the 6-quarter default: optimization needs >= 8 points.
+            stack.enter_context(patch(
+                "forecast_tool.data.loaders.load_historical_data",
+                return_value=_make_hist_df(9)))
+            stack.enter_context(patch(
+                "forecast_tool.forecasting.ensemble.optimize_ensemble_weights",
+                side_effect=spy_optimizer))
+            body = client.post(
+                "/api/forecast/ensemble",
+                json={"optimize_weights": True},
+            ).json()
+
+        assert captured.get("metric") == "mape"
+        assert body["summary"]["cvMape"] == 12.5
+
+    def test_optimized_weights_do_not_leak_to_unoptimizable_courses(self):
+        """weights_used/cv_mape must be per-course: a course below the 8-point
+        optimization threshold must get the default weights, not the previous
+        course's optimized ones."""
+        df = pd.concat([
+            _make_hist_df(9),
+            _make_hist_df(5).assign(course_code="FOUN 120"),
+        ], ignore_index=True)
+
+        def spy_optimizer(df_ts, forecast_fns, **kwargs):
+            return {"ols": 0.9, "ets": 0.05, "arima": 0.05}, 12.5
+
+        with ExitStack() as stack:
+            for p in self._patches():
+                stack.enter_context(p)
+            stack.enter_context(patch(
+                "forecast_tool.data.loaders.load_historical_data",
+                return_value=df))
+            stack.enter_context(patch(
+                "forecast_tool.forecasting.ensemble.optimize_ensemble_weights",
+                side_effect=spy_optimizer))
+            body = client.post(
+                "/api/forecast/ensemble",
+                json={"optimize_weights": True},
+            ).json()
+
+        by_course = {r["course"]: r for r in body["results"]}
+        assert by_course["FOUN 110"]["weights"] == {"ols": 0.9, "ets": 0.05, "arima": 0.05}
+        assert by_course["FOUN 120"]["weights"] == {"ols": 0.4, "ets": 0.35, "arima": 0.25}
+        assert by_course["FOUN 120"]["cvMape"] is None
+
     def test_buffer_percent_accepts_camel_case_config_key(self):
         with ExitStack() as stack:
             for p in self._patches():

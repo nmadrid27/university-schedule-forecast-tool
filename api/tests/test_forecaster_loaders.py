@@ -156,6 +156,58 @@ class TestLoadTermEnrollmentsMasterSchedule:
         result = load_term_enrollments(csv, term_code="202630")
         assert result[("SAVANNAH", "FOUN 110")] == 38.0
 
+    def test_master_csv_dedupes_duplicate_crn_rows(self, tmp_path):
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "CRN,SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\n"
+            "12345,FOUN,110,20,SAV,202630\n"
+            "12345,FOUN,110,20,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630")
+        assert result[("SAVANNAH", "FOUN 110")] == 20.0
+
+    def test_demand_metric_max_uses_max_enrollment(self, tmp_path):
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "SUBJ,CRS NUMBER,ACT ENR,MAX ENR,WL ACT ENR,CAMPUS,TERM\n"
+            "FOUN,110,17,20,3,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630", demand_metric="max")
+        assert result[("SAVANNAH", "FOUN 110")] == 20.0
+
+    def test_demand_metric_max_blank_cell_falls_back_to_actual(self, tmp_path):
+        """CSV blank cells arrive as '' (not None); a blank MAX ENR must fall
+        back to ACT ENR like the xlsx path does, not silently contribute 0."""
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "SUBJ,CRS NUMBER,ACT ENR,MAX ENR,WL ACT ENR,CAMPUS,TERM\n"
+            "FOUN,110,25,,0,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630", demand_metric="max")
+        assert result[("SAVANNAH", "FOUN 110")] == 25.0
+
+    def test_master_csv_blank_crs_row_does_not_suppress_valid_crn_row(self, tmp_path):
+        """A continuation row with an empty CRS NUMBER must not mark its CRN as
+        seen, or the later data-carrying row for the same CRN is dropped (the
+        xlsx loader already guards this ordering)."""
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "CRN,SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\n"
+            "12345,FOUN,,999,SAV,202630\n"
+            "12345,FOUN,110,20,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630")
+        assert result[("SAVANNAH", "FOUN 110")] == 20.0
+
+    def test_demand_metric_actual_plus_waitlist(self, tmp_path):
+        csv = tmp_path / "master.csv"
+        _write(csv,
+            "SUBJ,CRS NUMBER,ACT ENR,MAX ENR,WL ACT ENR,CAMPUS,TERM\n"
+            "FOUN,110,17,20,3,SAV,202630\n"
+        )
+        result = load_term_enrollments(csv, term_code="202630", demand_metric="actual_plus_waitlist")
+        assert result[("SAVANNAH", "FOUN 110")] == 20.0
+
     def test_missing_crs_number_skipped(self, tmp_path):
         csv = tmp_path / "master.csv"
         _write(csv, "SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\nFOUN,,20,SAV,202630\n")

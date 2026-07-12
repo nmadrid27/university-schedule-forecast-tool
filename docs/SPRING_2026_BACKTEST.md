@@ -509,3 +509,37 @@ Note: the year-filter Post-fix capture for NOW above (43.9%) is computed against
 **Constraint reminder:** the manual `set` adjustments file (`Data/adjustments/spring_2026.json`) remains empty per sprint scope. Any improvement here is from the seq-map edits alone.
 
 **Net verdict:** small, directionally-correct gain. The audit's premise — that the SCADnow gap is largely a campus-tag coverage problem — is partially supported but appears to be only one of several factors. The remaining gap likely needs (a) the blocked expansions resolved domain-side, (b) a code-level investigation of how campus expansion interacts with feeder enrollment lookup, and (c) seq-map authoring of explicit NOW routing for FOUN 250.
+
+## Post co-requisite fix (July 11, 2026)
+
+A full-tool review found and fixed a genuine engine bug in `load_sequence_mappings`
+(commit `8dee3e1`): non-CHOICE concurrent target cells ("FOUN 240; FOUN 245")
+inflated the `source_totals` denominator by one per listed course, so co-requisite
+demand was split 1/k instead of duplicated, and every other program sharing the
+same feeder was over-diluted. Each program-row now contributes its weight once
+per source course. This also resolves the "possible code-level reason" flagged in
+the honest assessment above: the 10.5-student values were equal-share
+`source_totals` dilution (144 x 0.95 x 1/13 x 1.10) compounded by the co-req
+inflation, not a campus/enrollment-lookup disconnect.
+
+Backtest (Cognos OFF, buffer 0, no adjustments, admits ON, vs PZSMSCP ACT).
+"Pre" is the same run on the pre-fix code, same data:
+
+| Metric | Pre | Post | Delta |
+|---|---:|---:|---:|
+| SAV capture | 81.7% | 87.2% | +5.5pp |
+| SAV MAE | 102.5 | 96.1 | -6.4 |
+| SAV MAPE | 51.4% | 50.8% | -0.6pp |
+| NOW capture | 44.8% | 46.0% | +1.2pp |
+| NOW MAE | 45.7 | 45.0 | -0.7 |
+| NOW MAPE | 55.8% | 55.3% | -0.5pp |
+| Combined capture | 74.6% | 79.3% | +4.7pp |
+
+Per-course: 12 rows moved; 9 moved toward ACT (largest: FOUN 113 SAV 731.4 -> 802.9
+vs ACT 1029; FOUN 112 SAV 463.6 -> 483.8 vs 653; FOUN 240 SAV 97.0 -> 106.5 vs 210).
+3 moved away: FOUN 220 SAV 464.0 -> 506.5 (vs ACT 262; the known seq-map
+over-routing, now slightly more visible), FOUN 220 NOW 57.7 -> 59.4 (vs 47), and
+FOUN 245 SAV 243.3 -> 257.6 (vs 249; from -2.3% to +3.5%). The fix is a correctness
+change, not tuning: it raises demand wherever inflated denominators were suppressing
+it, which helps under-forecast courses and slightly amplifies the separately-tracked
+FOUN 220 over-route.

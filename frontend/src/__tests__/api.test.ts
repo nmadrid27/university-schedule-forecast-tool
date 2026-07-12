@@ -68,6 +68,18 @@ describe('ApiClient — runForecast', () => {
   });
 });
 
+// ─── runBacktest ─────────────────────────────────────────────────────────
+
+describe('ApiClient — runBacktest', () => {
+  it('POSTs to /api/backtest', async () => {
+    mockFetch(200, { term: 'Fall 2026', method: 'Auto', demandMetric: 'actual', metrics: {}, byCampus: {}, rows: [] });
+    await api.runBacktest({ term: 'Fall 2026', method: 'auto' });
+    const [url, opts] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toMatch(/\/api\/backtest$/);
+    expect(opts.method).toBe('POST');
+  });
+});
+
 // ─── getConfig / updateConfig ─────────────────────────────────────────────
 
 describe('ApiClient — config endpoints', () => {

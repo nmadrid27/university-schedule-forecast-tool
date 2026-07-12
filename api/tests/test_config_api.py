@@ -119,3 +119,19 @@ def test_put_config_rejects_out_of_range_values(field, bad_value):
     payload[field] = bad_value
     r = client.put("/api/config", json=payload)
     assert r.status_code == 422
+
+
+def test_partial_config_put_preserves_method_and_metric(isolated_config):
+    """A PUT that omits method/demandMetric must not clobber the values a user
+    deliberately set on disk (stale clients send only the classic fields)."""
+    isolated_config.write_text(json.dumps({
+        "capacity": 20,
+        "method": "sequence",
+        "demand_metric": "max",
+    }))
+    r = client.put("/api/config", json={"capacity": 25})
+    assert r.status_code == 200
+    saved = json.loads(isolated_config.read_text())
+    assert saved["capacity"] == 25
+    assert saved["method"] == "sequence"
+    assert saved["demand_metric"] == "max"

@@ -1,6 +1,6 @@
 # SCAD FOUN Enrollment Forecasting Tool
 
-Predicts Foundation course enrollment and calculates section needs for upcoming terms. Primary method: sequence-based forecasting from major sequencing guides. Alternative: 3-model ensemble (OLS + ETS + ARIMA).
+Predicts Foundation course enrollment and calculates section needs for upcoming terms. Default method: Auto (same-season historical when enough post-rollout history exists, with a sequence-map fallback for first-time seasons). Alternatives: explicit sequence-map forecasting and a 3-model ensemble (OLS + ETS + ARIMA).
 
 ## Desktop App (recommended)
 
@@ -11,7 +11,7 @@ The app runs fully offline. Your data stays on the machine in an app-data folder
 - macOS: `~/Library/Application Support/SCAD Forecast Tool/`
 - Windows: `%APPDATA%\SCAD Forecast Tool\`
 
-To load data, click the in-app **Import Master Schedule…** button and pick the PZSMSCP export. **It must include the two quarters before the term you are forecasting** (e.g. Fall and Winter to forecast Spring); the model projects forward from those feeder terms, so a Spring-only file produces no forecast (the app will say so). Optionally use **Import Admits (optional)…** to load the PZSAAPF accepted-applicants report for new-student demand. The app copies files into the data folder for you.
+To load data, click the in-app **Import Master Schedule…** button and pick the PZSMSCP export. In **Auto** mode, the app uses prior same-season history when available (for example, Fall 2025 to forecast Fall 2026) and falls back to the sequence map when a season has no post-rollout history yet (for example, Spring 2026 needs Fall 2025 and Winter 2026 feeders). Optionally use **Import Admits (optional)…** to load the PZSAAPF accepted-applicants report for new-student demand. The app copies files into the data folder for you.
 
 The first launch shows a one-time security prompt because v1 is unsigned. On macOS, right-click the app and choose **Open**. On Windows, click **More info**, then **Run anyway**.
 
@@ -87,8 +87,10 @@ Three-tier application: Next.js frontend, FastAPI backend, Python forecasting en
 
 ### Forecasting Engine
 
-- **Primary**: Sequence-based — uses major sequencing guides to project demand from feeder courses
-- **Fallback**: Ratio-based — historical enrollment ratios (used for Summer and terms without sequencing data)
+- **Default**: Auto (same-season historical first, sequence-map fallback when needed)
+- **Historical**: course-level same-season projection from post-rollout PZSMSCP history
+- **Sequence**: major sequencing guides project demand from feeder courses
+- **Fallback**: Ratio-based (historical enrollment ratios, used for terms without sequencing data)
 - **Alternative**: 3-model ensemble (OLS 40%, ETS 35%, ARIMA 25%)
 
 ### Key Configuration
@@ -103,7 +105,7 @@ Edit via the Configuration sidebar in the UI, or directly in `forecast_config.js
 
 ### Cognos Data Input
 
-The tool consumes a single Cognos report: **PZSMSCP — Flexible Master Schedule of Classes with Power Prompts**. Drop the export at `Data/Master Schedule of Classes.xlsx` (or `.csv`); both formats are supported. The xlsx loader auto-detects the header row, dedupes co-instructor rows by CRN, and filters by SCAD term codes.
+The tool consumes a single Cognos report: **PZSMSCP - Flexible Master Schedule of Classes with Power Prompts**. Drop the export at `Data/Master Schedule of Classes.xlsx` (or `.csv`); both formats are supported. The xlsx and CSV loaders dedupe co-instructor rows by CRN, filter by SCAD term codes, and can forecast from ACT enrollment, scheduled max enrollment, or ACT + waitlist demand.
 
 The companion `PZSAAPF-SL31` admits report (already wired) provides next-term applicant demand. No other Cognos reports are required.
 
@@ -111,6 +113,7 @@ The companion `PZSAAPF-SL31` admits report (already wired) provides next-term ap
 
 - **[docs/HANDOFF_GUIDE.md](docs/HANDOFF_GUIDE.md)** — User guide with setup, usage, and troubleshooting
 - **[docs/DEVELOPMENT_HISTORY.md](docs/DEVELOPMENT_HISTORY.md)** — Technical build chronicle
+- **[docs/ADJUSTMENTS_POLICY.md](docs/ADJUSTMENTS_POLICY.md)**: Manual adjustment policy
 - **[CLAUDE.md](CLAUDE.md)** — Developer reference (architecture, domain logic, endpoints)
 - **[AGENTS.md](AGENTS.md)** — CLI forecasting runbook
 

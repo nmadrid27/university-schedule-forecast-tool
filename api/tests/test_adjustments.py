@@ -274,3 +274,17 @@ def test_output_campus_scoped_only_matches_correct_campus():
     result = apply_output_adjustments(adjs, rows, capacity=20)
     assert result[0]["projected_seats"] == 100
     assert result[1]["projected_seats"] == pytest.approx(80)
+
+
+def test_injected_row_normalizes_campus_casing():
+    """Injected rows join against forecaster rows and backtest actuals on the
+    display label ('Savannah'), so scope casing must be normalized."""
+    from adjustments import Adjustment, AdjustmentScope, apply_output_adjustments
+
+    adj = Adjustment(
+        id="c1", type="output", operation="set", value=50,
+        scope=AdjustmentScope(course="FOUN 110", campus="SAVANNAH"),
+        reason="manual estimate", enabled=True, source="manual",
+    )
+    rows = apply_output_adjustments([adj], [], capacity=20)
+    assert rows[0]["campus"] == "Savannah"

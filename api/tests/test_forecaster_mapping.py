@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from forecaster import (
     _active_curriculum_years,
     _compute_historical_ratios,
+    distribute_enrollments,
     load_sequence_mappings,
 )
 
@@ -142,6 +143,75 @@ class TestLoadSequenceMappings:
         has_120 = any(src == "FOUN 120" for src, _ in sav)
         assert has_110
         assert not has_120
+
+
+# ── concurrent (co-requisite) target courses ─────────────────────────────────
+
+class TestConcurrentTargetCourses:
+    """Non-CHOICE concurrent targets are co-requisites: the same cohort takes
+    ALL of them, so each target must receive the program's full feeder share.
+    The source_totals denominator must count each program-row once per source
+    course, not once per (source, target) pair — otherwise co-req demand is
+    split 1/k and sibling programs sharing the feeder get over-diluted.
+    """
+
+    def test_concurrent_targets_each_receive_full_program_share(self, tmp_path):
+        # One program: Winter FOUN 112 → Spring co-reqs FOUN 240 AND FOUN 245.
+        p = _seq_csv(tmp_path, ["FURN,BFA,GENERAL,First Year,,FOUN 112,FOUN 240; FOUN 245,"])
+        m = load_sequence_mappings(p, "spring", "winter", "fall")
+        sav = m["SAVANNAH"]
+        # The row contributes 1.0 to the denominator (one program-cohort)...
+        assert sav["closer_source_totals"]["FOUN 112"] == pytest.approx(1.0)
+        # ...so 100 feeder students land in full on BOTH targets.
+        result = distribute_enrollments(
+            {"FOUN 112": 100.0}, sav["closer_to_target"], 1.0,
+            source_totals=sav["closer_source_totals"])
+        assert result["FOUN 240"] == pytest.approx(100.0)
+        assert result["FOUN 245"] == pytest.approx(100.0)
+
+    def test_concurrent_targets_do_not_dilute_sibling_programs(self, tmp_path):
+        # PROG A routes to one target; PROG B routes to two co-reqs.
+        # Each program is one cohort: the denominator is 2, not 3.
+        p = _seq_csv(tmp_path, [
+            "PROG A,BFA,GENERAL,First Year,,FOUN 112,FOUN 113,",
+            "PROG B,BFA,GENERAL,First Year,,FOUN 112,FOUN 240; FOUN 245,",
+        ])
+        m = load_sequence_mappings(p, "spring", "winter", "fall")
+        sav = m["SAVANNAH"]
+        assert sav["closer_source_totals"]["FOUN 112"] == pytest.approx(2.0)
+        result = distribute_enrollments(
+            {"FOUN 112": 100.0}, sav["closer_to_target"], 1.0,
+            source_totals=sav["closer_source_totals"])
+        assert result["FOUN 113"] == pytest.approx(50.0)
+        assert result["FOUN 240"] == pytest.approx(50.0)
+        assert result["FOUN 245"] == pytest.approx(50.0)
+
+    def test_concurrent_targets_full_share_via_farther_feeder(self, tmp_path):
+        # Same co-req semantics on the farther (two-quarters-back) feeder path.
+        p = _seq_csv(tmp_path, ["FURN,BFA,GENERAL,First Year,FOUN 112,,FOUN 240; FOUN 245,"])
+        m = load_sequence_mappings(p, "spring", "winter", "fall")
+        sav = m["SAVANNAH"]
+        assert sav["farther_source_totals"]["FOUN 112"] == pytest.approx(1.0)
+        result = distribute_enrollments(
+            {"FOUN 112": 100.0}, sav["farther_to_target"], 1.0,
+            source_totals=sav["farther_source_totals"])
+        assert result["FOUN 240"] == pytest.approx(100.0)
+        assert result["FOUN 245"] == pytest.approx(100.0)
+
+    def test_choice_targets_still_split_and_dilute_once(self, tmp_path):
+        # Regression pin: a CHOICE target cell splits 1/N and the row still
+        # contributes exactly 1.0 to the denominator.
+        p = _seq_csv(tmp_path, [
+            "PROG A,BFA,GENERAL,First Year,,FOUN 112,CHOICE: FOUN 240 or FOUN 245,",
+        ])
+        m = load_sequence_mappings(p, "spring", "winter", "fall")
+        sav = m["SAVANNAH"]
+        assert sav["closer_source_totals"]["FOUN 112"] == pytest.approx(1.0)
+        result = distribute_enrollments(
+            {"FOUN 112": 100.0}, sav["closer_to_target"], 1.0,
+            source_totals=sav["closer_source_totals"])
+        assert result["FOUN 240"] == pytest.approx(50.0)
+        assert result["FOUN 245"] == pytest.approx(50.0)
 
 
 # ── _compute_historical_ratios ────────────────────────────────────────────────
