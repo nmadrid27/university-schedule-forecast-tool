@@ -1212,6 +1212,9 @@ class EnsembleResult(BaseModel):
     projectedSeats: float
     sections: int
     method: str
+    # The season the projection targets (the one following the last observed
+    # term); None when the course fell back to the mixed-series fit.
+    season: Optional[str] = None
     weights: Optional[Dict[str, float]] = None
     cvMape: Optional[float] = None
 
@@ -1286,10 +1289,45 @@ def run_ensemble_forecast(request: EnsembleRequest):
         results = []
         cv_mapes: List[float] = []
 
+        from forecast_tool.data.transformers import date_to_quarter_label
+
+        _SEASON_ORDER = ["winter", "spring", "summer", "fall"]
+
+        def _next_season_subseries(df):
+            """Return (same-season sub-series, season) for the season that
+            follows the last observation. FOUN enrollment is strongly seasonal
+            (Fall in the hundreds, Summer near zero), so fitting a trend or a
+            non-seasonal ARIMA through the mixed sawtooth produces spurious
+            slopes; each season must be projected from its own history. The
+            sub-series ds becomes the calendar year so OLS uses a year axis.
+            """
+            labels = df["ds"].map(lambda d: str(date_to_quarter_label(d)).split()[0].lower())
+            last = labels.iloc[-1]
+            nxt = _SEASON_ORDER[(_SEASON_ORDER.index(last) + 1) % 4]
+            sub = df[labels == nxt]
+            sub = pd.DataFrame({
+                "ds": sub["ds"].map(lambda d: str(d.year)),
+                "y": sub["y"].values,
+            })
+            return sub, nxt
+
+        def _season_aware(fn):
+            """Fit on the same-season sub-series when it has 2+ points; sparse
+            or unrecognizable series fall back to the full mixed series."""
+            def wrapped(df_train, periods_):
+                try:
+                    sub, _ = _next_season_subseries(df_train)
+                except Exception:
+                    sub = None
+                if sub is not None and len(sub) >= 2:
+                    return fn(sub, periods_)
+                return fn(df_train, periods_)
+            return wrapped
+
         forecast_fns = {
-            "ols": forecast_ols,
-            "ets": forecast_ets,
-            "arima": forecast_arima,
+            "ols": _season_aware(forecast_ols),
+            "ets": _season_aware(forecast_ets),
+            "arima": _season_aware(forecast_arima),
         }
 
         for course in sorted(courses):
@@ -1313,6 +1351,12 @@ def run_ensemble_forecast(request: EnsembleRequest):
             # threshold keep the defaults).
             weights_used = dict(OLS_WEIGHTS)
             cv_mape = None
+            try:
+                _sub, season_label = _next_season_subseries(df_ts)
+                if len(_sub) < 2:
+                    season_label = None
+            except Exception:
+                season_label = None
 
             # Optimize weights if requested and enough data
             if request.optimize_weights and len(df_ts) >= 8:
@@ -1356,6 +1400,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
                 projectedSeats=round(projected, 2),
                 sections=sections,
                 method="Ensemble (OLS+ETS+ARIMA)",
+                season=season_label,
                 weights={k: round(v, 3) for k, v in weights_used.items()},
                 cvMape=round(cv_mape, 2) if cv_mape is not None else None,
             ))
