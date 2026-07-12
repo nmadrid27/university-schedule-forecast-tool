@@ -28,3 +28,12 @@ graphify-out/
 dist/
 /web/
 frontend/out/
+
+# Runtime artifacts from /api/data/import and desktop use
+Data/*.bak
+Data/.import_tmp_*
+Data/.~lock*
+
+# Local-only docs (see CLAUDE.md: PRD is not in git)
+docs/PRD.md
+MEMORY.md
