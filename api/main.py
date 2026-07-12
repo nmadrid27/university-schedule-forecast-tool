@@ -201,8 +201,13 @@ class ChatResponse(BaseModel):
 
 class ForecastRequest(BaseModel):
     term: str
-    method: Optional[Literal["auto", "historical", "sequence"]] = None
-    demandMetric: Optional[Literal["actual", "max", "actual_plus_waitlist"]] = None
+    # Free-form strings, normalized in the handler: stale clients sending
+    # "Historical" or unknown values must degrade to the default, not 422.
+    method: Optional[str] = None
+    demandMetric: Optional[str] = None
+    # Internal switch for /api/backtest: calibration must score the raw model
+    # output, so the backtest path disables manual adjustments.
+    applyAdjustments: bool = True
     config: Optional[Dict[str, Any]] = None
     # Scenario percentages: e.g. [{"label": "conservative", "pct": -9},
     #                               {"label": "optimistic",  "pct": -5}]
@@ -253,8 +258,10 @@ class ConfigModel(BaseModel):
     bufferPercent: float = Field(default=10.0, ge=0.0, le=100.0)
     quartersToForecast: int = Field(default=2, ge=1, le=8)
     defaultTerm: str = "Spring 2026"
-    method: Literal["auto", "historical", "sequence"] = "auto"
-    demandMetric: Literal["actual", "max", "actual_plus_waitlist"] = "actual"
+    # None = "not provided": PUT must not clobber the on-disk value when a
+    # client omits these fields (stale clients send only the classic fields).
+    method: Optional[Literal["auto", "historical", "sequence"]] = None
+    demandMetric: Optional[Literal["actual", "max", "actual_plus_waitlist"]] = None
     admitsFile: Optional[str] = None
     enrollmentByMajorFile: Optional[str] = None
 
@@ -451,9 +458,12 @@ def run_forecast(request: ForecastRequest):
         # Use the requested term, falling back to config default
         target_term = request.term or disk_cfg.get("default_term", "Spring 2026")
 
-        # Load adjustments for this term
-        ta = load_adjustments(DATA_DIR, target_term)
-        active_adjustments = [a for a in ta.adjustments if a.enabled]
+        # Load adjustments for this term (skipped for backtests, which measure
+        # raw model accuracy against actuals)
+        active_adjustments: List = []
+        if request.applyAdjustments:
+            ta = load_adjustments(DATA_DIR, target_term)
+            active_adjustments = [a for a in ta.adjustments if a.enabled]
 
         # Apply config-level adjustments (global ones modify capacity/progression/buffer)
         if active_adjustments:
@@ -877,7 +887,9 @@ def list_terms():
 
             option = TermOption(termCode=candidate, label=label)
             priors = _post_rollout_prior_same_season_codes(label)
-            historical_ok = bool(priors and priors[0] in term_code_set)
+            # run_sameseason_forecast projects from ANY available post-rollout
+            # prior, so offering the term must not require the most recent one.
+            historical_ok = any(p in term_code_set for p in priors)
 
             closer_tc = info["closer_feeder"]["term_code"]
             farther_tc = info["farther_feeder"]["term_code"]
@@ -929,8 +941,10 @@ def update_config(config: ConfigModel):
     disk_cfg["buffer_percent"] = config.bufferPercent
     disk_cfg["quarters_to_forecast"] = config.quartersToForecast
     disk_cfg["default_term"] = config.defaultTerm
-    disk_cfg["method"] = config.method
-    disk_cfg["demand_metric"] = config.demandMetric
+    if config.method is not None:
+        disk_cfg["method"] = config.method
+    if config.demandMetric is not None:
+        disk_cfg["demand_metric"] = config.demandMetric
     _write_disk_config(disk_cfg)
     return {"success": True, "config": config}
 
@@ -976,6 +990,18 @@ async def import_data_file(file: UploadFile = File(...), kind: str = Form("maste
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in (".xlsx", ".xlsm", ".xls", ".csv"):
         raise HTTPException(status_code=400, detail="Unsupported file type")
+    if suffix == ".xls":
+        raise HTTPException(
+            status_code=400,
+            detail="Legacy .xls files cannot be read. In Excel, save the report "
+                   "as .xlsx and import it again.",
+        )
+    if kind == "admits" and suffix == ".csv":
+        raise HTTPException(
+            status_code=400,
+            detail="The admits report must be an Excel file. Export the PZSAAPF "
+                   "report as .xlsx and import it again.",
+        )
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     content = await file.read()
@@ -995,12 +1021,16 @@ async def import_data_file(file: UploadFile = File(...), kind: str = Form("maste
     try:
         tmp.write_bytes(content)
         if kind == "admits":
-            rows, _ = _load_admits_rows(tmp)
-            if not rows:
+            rows, header = _load_admits_rows(tmp)
+            # Require the real PZSAAPF header: the legacy column fallback in
+            # _load_admits_rows would otherwise accept any readable workbook
+            # (e.g. a Master Schedule uploaded as admits) and silently zero
+            # admits demand downstream.
+            if not rows or "student id" not in header:
                 raise HTTPException(
                     status_code=422,
-                    detail="The uploaded admits file could not be read. Export the "
-                           "PZSAAPF report as .xlsx and try again; the previous "
+                    detail="The uploaded file does not look like a PZSAAPF admits "
+                           "export (no Student ID column found). The previous "
                            "admits file was left untouched.",
                 )
         else:
@@ -1030,8 +1060,10 @@ async def import_data_file(file: UploadFile = File(...), kind: str = Form("maste
 
 class BacktestRequest(BaseModel):
     term: str
-    method: Optional[Literal["auto", "historical", "sequence"]] = "auto"
-    demandMetric: Optional[Literal["actual", "max", "actual_plus_waitlist"]] = "actual"
+    # None = fall through to the request config dict, then disk config —
+    # a truthy default here would make the configured values unreachable.
+    method: Optional[str] = None
+    demandMetric: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
 
 
@@ -1072,19 +1104,32 @@ def run_backtest(request: BacktestRequest):
     course and campus using PZSMSCP ACT/MAX/waitlist data as ground truth.
     """
     try:
+        disk_cfg = _read_disk_config()
+        req_cfg = dict(request.config or {})
+        # Resolve the metric ONCE and use it for both the forecast side and
+        # the actuals side, so the comparison is metric-consistent.
+        demand_metric = normalize_demand_metric(
+            request.demandMetric
+            or req_cfg.get("demandMetric")
+            or req_cfg.get("demand_metric")
+            or disk_cfg.get("demand_metric", "actual")
+        )
+        # Calibration scores the raw model: no planning buffer unless the
+        # caller explicitly set one, and no manual adjustments.
+        if "bufferPercent" not in req_cfg and "buffer_percent" not in req_cfg:
+            req_cfg["bufferPercent"] = 0
         forecast = run_forecast(ForecastRequest(
             term=request.term,
             method=request.method,
-            demandMetric=request.demandMetric,
-            config=request.config,
+            demandMetric=demand_metric,
+            applyAdjustments=False,
+            config=req_cfg,
         ))
 
-        disk_cfg = _read_disk_config()
         raw = disk_cfg.get("enrollment_source", "Data/Master Schedule of Classes.csv")
         source = Path(raw)
         master_path = source if source.is_absolute() else PROJECT_ROOT / source
         info = resolve_term_info(request.term)
-        demand_metric = normalize_demand_metric(request.demandMetric or disk_cfg.get("demand_metric", "actual"))
         crosswalk = load_crosswalk(master_path.parent / "sequence_crosswalk_template.csv")
         campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
 
@@ -1237,8 +1282,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
         periods = request.periods
 
         results = []
-        weights_used = dict(OLS_WEIGHTS)
-        cv_mape = None
+        cv_mapes: List[float] = []
 
         forecast_fns = {
             "ols": forecast_ols,
@@ -1261,6 +1305,12 @@ def run_ensemble_forecast(request: EnsembleRequest):
 
             if len(df_ts) < 4:
                 continue
+
+            # Per-course state: optimized weights must never leak from one
+            # course to the next (courses below the 8-point optimization
+            # threshold keep the defaults).
+            weights_used = dict(OLS_WEIGHTS)
+            cv_mape = None
 
             # Optimize weights if requested and enough data
             if request.optimize_weights and len(df_ts) >= 8:
@@ -1307,6 +1357,8 @@ def run_ensemble_forecast(request: EnsembleRequest):
                 weights={k: round(v, 3) for k, v in weights_used.items()},
                 cvMape=round(cv_mape, 2) if cv_mape is not None else None,
             ))
+            if cv_mape is not None:
+                cv_mapes.append(cv_mape)
 
         total_students = sum(r.projectedSeats for r in results)
         total_sections = sum(r.sections for r in results)
@@ -1318,8 +1370,11 @@ def run_ensemble_forecast(request: EnsembleRequest):
                 "totalSections": total_sections,
                 "coursesForecasted": len(results),
                 "method": "Ensemble (OLS+ETS+ARIMA)",
-                "weights": {k: round(v, 3) for k, v in weights_used.items()},
-                "cvMape": round(cv_mape, 2) if cv_mape is not None else None,
+                # With per-course optimization the weights vary by course (see
+                # each result row); the summary only reports the shared default.
+                "weights": None if request.optimize_weights
+                else {k: round(v, 3) for k, v in OLS_WEIGHTS.items()},
+                "cvMape": round(sum(cv_mapes) / len(cv_mapes), 2) if cv_mapes else None,
             },
         )
     except HTTPException:

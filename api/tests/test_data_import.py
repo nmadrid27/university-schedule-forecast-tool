@@ -163,3 +163,40 @@ def test_import_leaves_no_temp_files_behind():
     )
     leftovers = [p.name for p in main.DATA_DIR.iterdir() if p.name.startswith(".import_tmp")]
     assert leftovers == []
+
+
+def test_import_rejects_xls_with_guidance():
+    """Legacy .xls was never readable by the loaders (openpyxl is xlsx-only),
+    so accepting it just deferred the failure. Reject up front with guidance."""
+    r = client.post(
+        "/api/data/import",
+        files={"file": ("old-export.xls", b"whatever", "application/vnd.ms-excel")},
+    )
+    assert r.status_code == 400
+    assert ".xlsx" in r.json()["detail"]
+
+
+def test_import_admits_rejects_csv_with_guidance():
+    """The admits loader reads only xlsx; a CSV admits upload previously passed
+    the extension allowlist and then failed validation with a misleading
+    'could not be read'. Reject the format up front and say what to do."""
+    r = client.post(
+        "/api/data/import",
+        files={"file": ("PZSAAPF.csv", b"Student ID,Campus\n1,M\n", "text/csv")},
+        data={"kind": "admits"},
+    )
+    assert r.status_code == 400
+    assert ".xlsx" in r.json()["detail"]
+
+
+def test_import_admits_rejects_wrong_report():
+    """A PZSMSCP master schedule uploaded as admits must fail validation: the
+    legacy column fallback in _load_admits_rows would otherwise accept any
+    readable workbook and silently zero admits demand."""
+    r = client.post(
+        "/api/data/import",
+        files={"file": ("PZSMSCP.xlsx", _minimal_master_xlsx(), XLSX_MIME)},
+        data={"kind": "admits"},
+    )
+    assert r.status_code == 422
+    assert not (main.DATA_DIR / "Admits.xlsx").exists()

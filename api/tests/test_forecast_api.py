@@ -156,6 +156,13 @@ def test_forecast_set_adjustment_injects_row_when_forecast_empty(monkeypatch):
     assert injected[0]["adjusted"] is True
 
 
+def test_forecast_accepts_uppercase_method_string():
+    """Method values are normalized in the handler; stale clients sending
+    'Historical' or unknown strings must not be rejected at validation."""
+    r = client.post("/api/forecast", json={"term": "Spring 2026", "method": "Historical"})
+    assert r.status_code == 200
+
+
 # --------------- Error handling -------------------------------------------
 
 def test_forecast_returns_404_on_file_not_found(monkeypatch):

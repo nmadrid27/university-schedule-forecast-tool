@@ -101,6 +101,16 @@ def remove_adjustment(data_dir: Path, term: str, adj_id: str) -> TermAdjustments
 
 # --------------- Application ---------------
 
+# Display labels used by forecaster result rows, keyed by common spellings.
+_CAMPUS_DISPLAY = {
+    "savannah": "Savannah",
+    "sav": "Savannah",
+    "scadnow": "SCADnow",
+    "now": "SCADnow",
+    "atlanta": "Atlanta",
+    "atl": "Atlanta",
+}
+
 def apply_config_adjustments(
     adjustments: List[Adjustment],
     capacity: int,
@@ -201,9 +211,14 @@ def apply_output_adjustments(
             continue  # already handled in the loop above
         seats = adj.value
         sections = int(math.ceil(seats / capacity)) if capacity > 0 and seats > 0 else 0
+        # Normalize to the display labels forecaster rows use ("Savannah"),
+        # or case-sensitive joins downstream (backtest, change deltas) split
+        # the injected row into a phantom campus.
+        campus_raw = adj.scope.campus
+        campus = _CAMPUS_DISPLAY.get(campus_raw.strip().lower(), campus_raw)
         output.append({
             "course": adj.scope.course,
-            "campus": adj.scope.campus,
+            "campus": campus,
             "projected_seats": seats,
             "sections": sections,
             "adjusted": True,

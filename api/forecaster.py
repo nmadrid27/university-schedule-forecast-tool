@@ -466,7 +466,11 @@ def _metric_enrollment(getter, demand_metric: Optional[str]) -> float:
     metric = normalize_demand_metric(demand_metric)
     if metric == "max":
         value = getter("MAX ENR")
-        return parse_number(value if value is not None else getter("ACT ENR"))
+        # CSV blank cells arrive as "" (xlsx blanks arrive as None); both mean
+        # "no cap recorded" and must fall back to actual enrollment, not 0.
+        if value is None or str(value).strip() == "":
+            value = getter("ACT ENR")
+        return parse_number(value)
     if metric == "actual_plus_waitlist":
         return parse_number(getter("ACT ENR")) + parse_number(getter("WL ACT ENR"))
     return parse_number(getter("ACT ENR"))
@@ -915,14 +919,17 @@ def load_term_enrollments(
                 crn_key = f"{term_value}:{str(row.get('CRN') or '').strip()}"
                 if crn_key.endswith(":"):
                     crn_key = ""
-                if crn_key:
-                    if crn_key in seen_master_crns:
-                        continue
-                    seen_master_crns.add(crn_key)
+                if crn_key and crn_key in seen_master_crns:
+                    continue
                 subj = (row.get("SUBJ") or "").strip().upper()
                 crs = (row.get("CRS NUMBER") or "").strip()
                 if not crs:
+                    # Mirror the xlsx loader: a continuation row with no course
+                    # number must NOT mark its CRN as seen, or it suppresses
+                    # the data-carrying row for the same CRN.
                     continue
+                if crn_key:
+                    seen_master_crns.add(crn_key)
                 raw_course = f"{subj} {crs}"
                 course = xwalk.get(raw_course, raw_course)
                 if not course.startswith("FOUN "):

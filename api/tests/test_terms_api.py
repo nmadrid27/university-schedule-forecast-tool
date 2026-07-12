@@ -96,3 +96,14 @@ def test_terms_ratio_forecastability_uses_closer_feeder_year(monkeypatch, tmp_pa
     body = client.get("/api/terms").json()
     forecastable_codes = {t["termCode"] for t in body["forecastable_terms"]}
     assert "202720" in forecastable_codes  # Winter 2027
+
+
+def test_historical_offered_when_any_post_rollout_prior_is_available(monkeypatch):
+    """run_sameseason_forecast can forecast from ANY post-rollout prior
+    same-season term, so /api/terms must not require the most recent one.
+    With only Fall 2025 (202610) imported, Fall 2027 (202810) is historically
+    forecastable even though Fall 2026 (202710) is missing."""
+    monkeypatch.setattr(main, "get_available_terms", lambda *a, **k: ["202610"])
+    body = client.get("/api/terms").json()
+    historical_codes = [t["termCode"] for t in body["forecastable_by_method"]["historical"]]
+    assert "202810" in historical_codes
