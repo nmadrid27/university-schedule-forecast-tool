@@ -539,18 +539,20 @@ def _admit_header_index(header: Dict[str, int], *names: str, fallback: int) -> i
     return fallback
 
 
-def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
-    """Extract FOUN course demand from accepted applicants xlsx (PZSAAPF-SL31).
+_ADMIT_CAMPUS_MAP = {"M": "SAVANNAH", "O": "SCADNOW"}
 
-    Reads the "Currently Registered Courses (NO WL)" column for each student.
-    Campus M → SAVANNAH, O → SCADNOW. Returns {campus: {foun_course: count}}.
-    Returns empty dict if file is missing or unreadable.
+
+def _decode_admit_rows(path: Path) -> Optional[List[Tuple[str, str]]]:
+    """Return [(campus, registered_courses_text), ...] for decodable admit rows.
+
+    One row decoder shared by ``load_admits_foun_demand`` and
+    ``analyze_admits_registration``, so a Cognos column rename is fixed once
+    and both always read the same columns. Returns None when the file is
+    missing or unreadable; rows with campus codes outside the map are skipped.
     """
     rows, header = _load_admits_rows(path)
     if not rows:
-        return {}
-
-    CAMPUS_MAP = {"M": "SAVANNAH", "O": "SCADNOW"}
+        return None
     campus_idx = _admit_header_index(header, "campus", fallback=12)
     courses_idx = _admit_header_index(
         header,
@@ -558,22 +560,38 @@ def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
         "currently registered courses",
         fallback=20,
     )
-    result: Dict[str, DefaultDict] = {
-        "SAVANNAH": defaultdict(int),
-        "SCADNOW": defaultdict(int),
-    }
-
+    decoded: List[Tuple[str, str]] = []
     for row in rows:
         if not row or row[0] is None:
             continue
         campus_code = str(row[campus_idx]).strip() if len(row) > campus_idx and row[campus_idx] else ""
-        campus = CAMPUS_MAP.get(campus_code)
+        campus = _ADMIT_CAMPUS_MAP.get(campus_code)
         if not campus:
             continue
         reg_courses = row[courses_idx] if len(row) > courses_idx else None
-        if not reg_courses:
+        decoded.append((campus, str(reg_courses or "").strip()))
+    return decoded
+
+
+def load_admits_foun_demand(path: Path) -> Dict[str, Dict[str, int]]:
+    """Extract FOUN course demand from accepted applicants xlsx (PZSAAPF-SL31).
+
+    Reads the "Currently Registered Courses (NO WL)" column for each student.
+    Campus M → SAVANNAH, O → SCADNOW. Returns {campus: {foun_course: count}}.
+    Returns empty dict if file is missing or unreadable.
+    """
+    decoded = _decode_admit_rows(path)
+    if decoded is None:
+        return {}
+
+    result: Dict[str, DefaultDict] = {
+        "SAVANNAH": defaultdict(int),
+        "SCADNOW": defaultdict(int),
+    }
+    for campus, reg_text in decoded:
+        if not reg_text:
             continue
-        for code in FOUN_CODE_RE.findall(str(reg_courses)):
+        for code in FOUN_CODE_RE.findall(reg_text):
             result[campus][f"FOUN {code}"] += 1
 
     return {k: dict(v) for k, v in result.items()}
@@ -586,34 +604,17 @@ def analyze_admits_registration(path: Path) -> Dict:
     have registered. A low FOUN-registration rate usually means the snapshot was
     pulled too early, so FOUN 110/111 will be undercounted.
     """
-    rows, header = _load_admits_rows(path)
-    if not rows:
+    decoded = _decode_admit_rows(path)
+    if decoded is None:
         return {}
-
-    CAMPUS_MAP = {"M": "SAVANNAH", "O": "SCADNOW"}
-    campus_idx = _admit_header_index(header, "campus", fallback=12)
-    courses_idx = _admit_header_index(
-        header,
-        "currently registered courses (no wl)",
-        "currently registered courses",
-        fallback=20,
-    )
 
     by_campus: Dict[str, Dict[str, float]] = {
         "SAVANNAH": {"total": 0, "registered_any": 0, "registered_foun": 0},
         "SCADNOW": {"total": 0, "registered_any": 0, "registered_foun": 0},
     }
 
-    for row in rows:
-        if not row or row[0] is None:
-            continue
-        campus_code = str(row[campus_idx]).strip() if len(row) > campus_idx and row[campus_idx] else ""
-        campus = CAMPUS_MAP.get(campus_code)
-        if not campus:
-            continue
+    for campus, reg_text in decoded:
         by_campus[campus]["total"] += 1
-        reg_courses = row[courses_idx] if len(row) > courses_idx else None
-        reg_text = str(reg_courses or "").strip()
         if reg_text:
             by_campus[campus]["registered_any"] += 1
         if FOUN_CODE_RE.search(reg_text):
@@ -629,7 +630,7 @@ def analyze_admits_registration(path: Path) -> Dict:
         stats["registered_any_rate"] = round(any_rate, 3)
         stats["registered_foun_rate"] = round(foun_rate, 3)
         if total >= 20 and foun_rate < 0.50:
-            label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow"}.get(campus, campus)
+            label = CAMPUS_DISPLAY.get(campus, campus)
             warnings.append(
                 f"Admits snapshot may be early for {label}: only {foun_rate:.0%} "
                 f"of admits are registered for a FOUN course. FOUN 110/111 demand may be low."
@@ -752,6 +753,12 @@ def load_enrollment_by_major(path: Path) -> Dict[str, Dict[str, Dict[str, float]
                 )
 
     return result
+
+
+# Canonical display labels for forecast result rows, keyed by the normalized
+# campus codes the loaders produce. One copy: result rows, backtest joins, and
+# warnings must all emit identical labels or (course, campus) keys stop matching.
+CAMPUS_DISPLAY = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
 
 
 def _normalize_campus_label(raw_lower: str) -> str:
@@ -1232,7 +1239,7 @@ def run_sequence_forecast(
             output_rows.append(
                 {
                     "course": course,
-                    "campus": {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}.get(campus, campus),
+                    "campus": CAMPUS_DISPLAY.get(campus, campus),
                     "projected_seats": seats,
                     "sections": compute_sections(seats, capacity),
                     "method": "sequence_map_feeder_mapping",
@@ -1308,7 +1315,7 @@ def run_sameseason_forecast(
             if str(course).startswith("FOUN"):
                 series[(campus, course)][int(code[:4])] = seats
 
-    campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
+    campus_label = CAMPUS_DISPLAY
     buffer_mult = 1.0 + (buffer_percent / 100.0)
     rows: List[Dict] = []
 

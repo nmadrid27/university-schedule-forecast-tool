@@ -156,6 +156,26 @@ def test_forecast_set_adjustment_injects_row_when_forecast_empty(monkeypatch):
     assert injected[0]["adjusted"] is True
 
 
+def test_auto_fallback_label_wraps_method_even_without_signal(monkeypatch):
+    """When auto falls back to the sequence path, the reported method must say
+    so even if the fallback also found no signal (e.g. the rows that ship are
+    adjustment-injected)."""
+    set_adj = Adjustment(
+        id="x3", type="output", operation="set", value=60,
+        scope=AdjustmentScope(course="FOUN 110", campus="SAV"),
+        reason="manual estimate", enabled=True, source="manual",
+    )
+    monkeypatch.setattr(main, "run_sequence_forecast", lambda **kw: [])
+    monkeypatch.setattr(main, "run_sameseason_forecast", lambda **kw: [])
+    monkeypatch.setattr(
+        main,
+        "load_adjustments",
+        lambda data_dir, term: TermAdjustments(term=term, adjustments=[set_adj]),
+    )
+    body = client.post("/api/forecast", json={"term": "Spring 2026", "method": "auto"}).json()
+    assert body["summary"]["method"].startswith("Auto (")
+
+
 def test_forecast_accepts_uppercase_method_string():
     """Method values are normalized in the handler; stale clients sending
     'Historical' or unknown strings must not be rejected at validation."""
