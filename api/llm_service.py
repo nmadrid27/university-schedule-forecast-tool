@@ -7,6 +7,7 @@ output parsing, and graceful fallback.
 """
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -39,6 +40,21 @@ def _write_settings(data: Dict[str, Any]) -> None:
     sp = settings_path()
     sp.parent.mkdir(parents=True, exist_ok=True)
     sp.write_text(json.dumps(data, indent=2))
+    # settings.json holds the LLM API key: owner-only, not the default umask.
+    try:
+        os.chmod(sp, 0o600)
+    except OSError:
+        pass
+
+
+def _llm_failure_response(exc: Exception) -> Dict[str, Any]:
+    """Log the provider error server-side; never surface raw SDK exception
+    text (URLs, org ids, request metadata) in a chat response."""
+    logging.getLogger(__name__).warning("LLM call failed: %s", exc)
+    return _fallback_response(
+        "LLM call failed. Check the AI Assistant settings (provider, model, "
+        "API key) and try again."
+    )
 
 
 def load_api_key() -> Optional[str]:
@@ -295,7 +311,7 @@ class LLMService:
             raw = response.choices[0].message.content or ""
             return parse_llm_response(raw)
         except Exception as e:
-            return _fallback_response(f"LLM call failed: {str(e)}")
+            return _llm_failure_response(e)
 
     async def _call_anthropic(
         self,
@@ -327,7 +343,7 @@ class LLMService:
             raw = response.content[0].text if response.content else ""
             return parse_llm_response(raw)
         except Exception as e:
-            return _fallback_response(f"LLM call failed: {str(e)}")
+            return _llm_failure_response(e)
 
 
 def _fallback_response(error_msg: str) -> Dict[str, Any]:

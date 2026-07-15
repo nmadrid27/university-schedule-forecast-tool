@@ -30,6 +30,28 @@ def _term_to_parts(term_code: str) -> Tuple[str, int]:
     return season, cal_year
 
 
+def _calendar_axis(ds: pd.Series) -> Optional[np.ndarray]:
+    """Map ds values to calendar years when they are year- or term-code-like.
+
+    A same-season series with a missing year must not be treated as adjacent
+    points. Returns None for datetime or unrecognized series, in which case
+    the caller falls back to a positional axis.
+    """
+    if pd.api.types.is_datetime64_any_dtype(ds):
+        return None
+    years = []
+    for value in ds:
+        text = str(value).strip()
+        if len(text) == 6 and text.isdigit() and text[4:] in _QTR_MAP:
+            _, year = _term_to_parts(text)
+        elif text.isdigit() and 1900 <= int(text) <= 2100:
+            year = int(text)
+        else:
+            return None
+        years.append(year)
+    return np.asarray(years, dtype=float)
+
+
 def _ols_slope_intercept(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
     """Ordinary least-squares fit: y = slope * x + intercept."""
     x = x.astype(float)
@@ -74,8 +96,10 @@ def forecast_ols(df_ts: pd.DataFrame, periods: int = 1) -> pd.DataFrame:
     try:
         df = df_ts.copy().sort_values("ds").reset_index(drop=True)
 
-        # Represent each ds as a numeric index (position in the sorted series)
-        x = np.arange(len(df), dtype=float)
+        # Use the calendar year as the x-axis when ds encodes one, so a gap
+        # year counts as a gap; otherwise fall back to a positional index.
+        axis = _calendar_axis(df["ds"])
+        x = axis if axis is not None else np.arange(len(df), dtype=float)
         y = df["y"].values.astype(float)
 
         slope, intercept = _ols_slope_intercept(x, y)
@@ -89,7 +113,7 @@ def forecast_ols(df_ts: pd.DataFrame, periods: int = 1) -> pd.DataFrame:
         n = len(df)
         rows = []
         for i in range(1, periods + 1):
-            x_fut = float(n - 1 + i)
+            x_fut = float(x[-1] + i)
             yhat = max(0.0, slope * x_fut + intercept)
             margin = 1.96 * resid_std
             rows.append({
@@ -167,11 +191,14 @@ def forecast_next_season(
     if len(df) < 2:
         return None
 
-    result_df = forecast_ols(df[["ds", "y"]], periods=1)
+    # Extrapolate to the requested year, not one step past the last point.
+    last_year = int(df.iloc[-1]["cal_year"])
+    periods = max(1, int(next_year) - last_year)
+    result_df = forecast_ols(df[["ds", "y"]], periods=periods)
     if result_df.empty:
         return None
 
-    row = result_df.iloc[0]
+    row = result_df.iloc[-1]
     yhat = float(row["yhat"])
     slope = float(row["slope"])
 
@@ -222,19 +249,22 @@ def detect_anomaly(
     if len(df) < 2:
         return {}
 
-    # If no latest_actual supplied, leave-one-out: train on all-but-last, predict last
+    # If no latest_actual supplied, leave-one-out: train on all-but-last and
+    # project the trend to the left-out point's actual year.
     if latest_actual is None:
         train_df = df.iloc[:-1][["ds", "y"]]
         actual = float(df.iloc[-1]["y"])
+        periods = max(1, int(df.iloc[-1]["cal_year"]) - int(df.iloc[-2]["cal_year"]))
     else:
         train_df = df[["ds", "y"]]
         actual = float(latest_actual)
+        periods = 1
 
-    result_df = forecast_ols(train_df, periods=1)
+    result_df = forecast_ols(train_df, periods=periods)
     if result_df.empty:
         return {}
 
-    yhat = float(result_df.iloc[0]["yhat"])
+    yhat = float(result_df.iloc[-1]["yhat"])
     if yhat == 0:
         deviation = 0.0
     else:

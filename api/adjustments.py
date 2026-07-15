@@ -11,6 +11,7 @@ Persisted as JSON in Data/adjustments/{term}.json.
 
 import json
 import math
+import re
 import uuid
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
@@ -53,8 +54,19 @@ def _adjustments_dir(data_dir: Path) -> Path:
     return d
 
 
+_TERM_SLUG = re.compile(r"[a-z0-9][a-z0-9_\-]*")
+
+
 def _term_file(data_dir: Path, term: str) -> Path:
+    """Resolve the per-term adjustments file.
+
+    The term arrives as a URL path segment and becomes a filename, so anything
+    outside the safe slug alphabet (path metacharacters, dots, separators) is
+    rejected rather than resolved.
+    """
     safe = term.replace(" ", "_").lower()
+    if not _TERM_SLUG.fullmatch(safe):
+        raise ValueError(f"Invalid term: {term!r}")
     return _adjustments_dir(data_dir) / f"{safe}.json"
 
 

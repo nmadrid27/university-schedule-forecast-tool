@@ -442,3 +442,27 @@ class TestEnrollmentWeights:
                                    enrollment_weights=weights)
         assert m["SAVANNAH"]["farther_source_totals"]["FOUN 110"] == pytest.approx(208.0)
         assert m["SAVANNAH"]["farther_to_target"][("FOUN 110", "FOUN 220")] == pytest.approx(208.0)
+
+
+class TestFartherSourceTotalsSymmetry:
+    def test_farther_denominator_counts_non_anchor_corequisite_rows(self, tmp_path):
+        """farther_source_totals must accumulate from the UNFILTERED farther
+        courses like the closer side does. A course that is a non-anchor
+        co-requisite in one row and the anchor in another must be diluted by
+        both rows, or its enrollment is over-distributed (the non-anchor
+        cohort is already routed via its anchor)."""
+        p = _seq_csv(tmp_path, [
+            # FOUN 101 rides along with anchor FOUN 100 here...
+            "PROG A,BFA,GENERAL,First Year,FOUN 100 FOUN 101,,FOUN 240,",
+            "PROG B,BFA,GENERAL,First Year,FOUN 100,,FOUN 230,",
+            "PROG D,BFA,GENERAL,First Year,FOUN 100,,FOUN 230,",
+            # ...and is the sole (anchor) feeder here.
+            "PROG C,BFA,GENERAL,First Year,FOUN 101,,FOUN 250,",
+        ])
+        m = load_sequence_mappings(p, "spring", "winter", "fall")
+        sav = m["SAVANNAH"]
+        assert sav["farther_source_totals"]["FOUN 101"] == pytest.approx(2.0)
+        result = distribute_enrollments(
+            {"FOUN 101": 100.0}, sav["farther_to_target"], 1.0,
+            source_totals=sav["farther_source_totals"])
+        assert result["FOUN 250"] == pytest.approx(50.0)

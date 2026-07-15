@@ -1,6 +1,14 @@
 // API client for communicating with the FastAPI backend
 
-import type { DemandMetric, ForecastMethod } from '@/lib/types';
+import type {
+    AdjustmentRecord,
+    ApiForecastConfig,
+    DemandMetric,
+    ForecastMethod,
+    ForecastResult,
+    ForecastSummary,
+    TermOption,
+} from '@/lib/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
@@ -13,14 +21,14 @@ export interface ChatRequest {
 
 export interface ForecastRequest {
     term: string;
+    // Sent top-level only; the backend reads request-level values before the
+    // config dict, so repeating them inside config invites silent drift.
     method?: ForecastMethod;
     demandMetric?: DemandMetric;
     config?: {
         capacity?: number;
         progressionRate?: number;
         bufferPercent?: number;
-        method?: ForecastMethod;
-        demandMetric?: DemandMetric;
     };
 }
 
@@ -70,28 +78,12 @@ class ApiClient {
         });
     }
 
-    // Forecast endpoint - run forecast and get results
+    // Forecast endpoint - run forecast and get results. The wire summary has
+    // no lastUpdated; callers stamp it client-side (see useChat).
     async runForecast(request: ForecastRequest) {
         return this.request<{
-            results: Array<{
-                course: string;
-                campus: string;
-                projectedSeats: number;
-                sections: number;
-                change?: number;
-                changePercent?: number;
-                adjusted?: boolean;
-                anomalyFlag?: Record<string, unknown> | null;
-            }>;
-            summary: {
-                totalStudents: number;
-                totalSections: number;
-                coursesForecasted: number;
-                method: string;
-                adjustmentsApplied?: number;
-                demandMetric?: DemandMetric;
-                warnings?: string[] | null;
-            };
+            results: ForecastResult[];
+            summary: Omit<ForecastSummary, 'lastUpdated'>;
         }>('/api/forecast', {
             method: 'POST',
             body: JSON.stringify(request),
@@ -153,29 +145,13 @@ class ApiClient {
 
     // Get current config
     async getConfig() {
-        return this.request<{
-            capacity: number;
-            progressionRate: number;
-            bufferPercent: number;
-            quartersToForecast: number;
-            defaultTerm: string;
-            method: ForecastMethod;
-            demandMetric: DemandMetric;
-        }>('/api/config', {
+        return this.request<ApiForecastConfig>('/api/config', {
             method: 'GET',
         });
     }
 
     // Update config
-    async updateConfig(config: Partial<{
-        capacity: number;
-        progressionRate: number;
-        bufferPercent: number;
-        quartersToForecast: number;
-        defaultTerm: string;
-        method: ForecastMethod;
-        demandMetric: DemandMetric;
-    }>) {
+    async updateConfig(config: Partial<ApiForecastConfig>) {
         return this.request<{ success: boolean }>('/api/config', {
             method: 'PUT',
             body: JSON.stringify(config),
@@ -185,9 +161,9 @@ class ApiClient {
     // Get available terms
     async getTerms() {
         return this.request<{
-            available_terms: Array<{ termCode: string; label: string }>;
-            forecastable_terms: Array<{ termCode: string; label: string }>;
-            forecastable_by_method?: Record<ForecastMethod, Array<{ termCode: string; label: string }>>;
+            available_terms: TermOption[];
+            forecastable_terms: TermOption[];
+            forecastable_by_method?: Record<ForecastMethod, TermOption[]>;
         }>('/api/terms', {
             method: 'GET',
         });
@@ -205,17 +181,7 @@ class ApiClient {
     async getAdjustments(term: string) {
         return this.request<{
             term: string;
-            adjustments: Array<{
-                id: string;
-                type: string;
-                parameter?: string | null;
-                operation?: string | null;
-                value: number;
-                scope: { course?: string | null; campus?: string | null };
-                reason: string;
-                enabled: boolean;
-                source: string;
-            }>;
+            adjustments: AdjustmentRecord[];
         }>(`/api/adjustments/${encodeURIComponent(term)}`, {
             method: 'GET',
         });
@@ -241,17 +207,7 @@ class ApiClient {
     async toggleAdjustment(term: string, adjId: string) {
         return this.request<{
             term: string;
-            adjustments: Array<{
-                id: string;
-                type: string;
-                parameter?: string | null;
-                operation?: string | null;
-                value: number;
-                scope: { course?: string | null; campus?: string | null };
-                reason: string;
-                enabled: boolean;
-                source: string;
-            }>;
+            adjustments: AdjustmentRecord[];
         }>(`/api/adjustments/${encodeURIComponent(term)}/${adjId}/toggle`, {
             method: 'PUT',
         });
@@ -260,17 +216,7 @@ class ApiClient {
     async removeAdjustment(term: string, adjId: string) {
         return this.request<{
             term: string;
-            adjustments: Array<{
-                id: string;
-                type: string;
-                parameter?: string | null;
-                operation?: string | null;
-                value: number;
-                scope: { course?: string | null; campus?: string | null };
-                reason: string;
-                enabled: boolean;
-                source: string;
-            }>;
+            adjustments: AdjustmentRecord[];
         }>(`/api/adjustments/${encodeURIComponent(term)}/${adjId}`, {
             method: 'DELETE',
         });

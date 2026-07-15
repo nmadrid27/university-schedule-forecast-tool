@@ -285,3 +285,10 @@ def cross_validate_course(
         horizon=horizon,
         step=step,
     )
+
+
+# Public aliases: the backtest endpoint reuses this module's error math so
+# reported calibration numbers stay comparable to CV-optimized ensemble error.
+compute_mape = _compute_mape
+compute_rmse = _compute_rmse
+compute_mae = _compute_mae

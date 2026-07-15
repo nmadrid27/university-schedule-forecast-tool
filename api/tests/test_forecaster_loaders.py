@@ -15,7 +15,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from forecaster import get_available_terms, load_admits_foun_demand, load_enrollment_by_major, load_term_enrollments
+from forecaster import (
+    get_available_terms,
+    load_admits_foun_demand,
+    load_all_term_enrollments,
+    load_enrollment_by_major,
+    load_term_enrollments,
+)
 
 
 # ── Fixture helpers ────────────────────────────────────────────────────────────
@@ -632,3 +638,70 @@ class TestGetAvailableTermsXLSX:
         p = tmp_path / "bad.xlsx"
         p.write_bytes(b"not xlsx")
         assert get_available_terms(p) == []
+
+
+# ── load_all_term_enrollments — single-pass, grouped by term ──────────────────
+
+class TestLoadAllTermEnrollments:
+    """One parse of the Master Schedule must yield every term's totals, so the
+    anomaly-history builder does not re-read the file once per term."""
+
+    def test_csv_groups_totals_by_term(self, tmp_path):
+        p = tmp_path / "master.csv"
+        _write(p,
+            "CRN,SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\n"
+            "111,FOUN,110,20,SAV,202610\n"
+            "222,FOUN,110,30,SAV,202620\n"
+            "333,FOUN,230,15,NOW,202620\n"
+        )
+        result = load_all_term_enrollments(p)
+        assert result["202610"][("SAVANNAH", "FOUN 110")] == 20.0
+        assert result["202620"][("SAVANNAH", "FOUN 110")] == 30.0
+        assert result["202620"][("SCADNOW", "FOUN 230")] == 15.0
+
+    def test_csv_dedupes_crn_within_each_term(self, tmp_path):
+        # The same CRN reused across terms counts once per term.
+        p = tmp_path / "master.csv"
+        _write(p,
+            "CRN,SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\n"
+            "111,FOUN,110,20,SAV,202610\n"
+            "111,FOUN,110,20,SAV,202610\n"
+            "111,FOUN,110,25,SAV,202620\n"
+        )
+        result = load_all_term_enrollments(p)
+        assert result["202610"][("SAVANNAH", "FOUN 110")] == 20.0
+        assert result["202620"][("SAVANNAH", "FOUN 110")] == 25.0
+
+    def test_xlsx_groups_totals_by_term(self, tmp_path):
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202610", "SAV", 18, "Smith"),
+            (10002, "FOUN", "110", "202620", "SAV", 22, "Jones"),
+        ])
+        result = load_all_term_enrollments(p)
+        assert result["202610"][("SAVANNAH", "FOUN 110")] == 18.0
+        assert result["202620"][("SAVANNAH", "FOUN 110")] == 22.0
+
+    def test_xlsx_honors_demand_metric(self, tmp_path):
+        p = _pzsmscp_xlsx(tmp_path, [
+            (10001, "FOUN", "110", "202610", "SAV", 18, "Smith"),
+        ])
+        result = load_all_term_enrollments(p, demand_metric="max")
+        assert result["202610"][("SAVANNAH", "FOUN 110")] == 25.0  # fixture MAX ENR
+
+    def test_legacy_term_csv_returns_empty(self, tmp_path):
+        p = tmp_path / "term.csv"
+        _write(p, "Course,Enrollment\nFOUN 110,50\n")
+        assert load_all_term_enrollments(p) == {}
+
+
+def test_master_csv_blank_crn_row_with_course_is_skipped(tmp_path):
+    """Master-format rows without a CRN are summary/continuation artifacts;
+    both formats now skip them (the xlsx loader always did)."""
+    p = tmp_path / "master.csv"
+    _write(p,
+        "CRN,SUBJ,CRS NUMBER,ACT ENR,CAMPUS,TERM\n"
+        ",FOUN,110,999,SAV,202630\n"
+        "444,FOUN,110,20,SAV,202630\n"
+    )
+    result = load_term_enrollments(p, term_code="202630")
+    assert result[("SAVANNAH", "FOUN 110")] == 20.0

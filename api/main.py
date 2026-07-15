@@ -26,6 +26,7 @@ for _p in (str(API_DIR), str(SOURCE_ROOT)):
         sys.path.insert(0, _p)
 
 from forecaster import (
+    CAMPUS_DISPLAY,
     run_sequence_forecast,
     run_sameseason_forecast,
     run_ratio_forecast,
@@ -35,6 +36,7 @@ from forecaster import (
     resolve_term_info,
     load_crosswalk,
     load_term_enrollments,
+    load_all_term_enrollments,
     analyze_admits_registration,
     normalize_demand_metric,
     _load_admits_rows,
@@ -434,6 +436,26 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail="Failed to process chat request")
 
 
+def _ratio_feeder_csvs(info: Dict) -> List[Path]:
+    """Feeder-quarter forecast CSVs the ratio fallback can consume.
+
+    One predicate for both /api/terms (is the fallback available?) and the
+    forecast path (which file to use), so the two can never disagree on the
+    filename convention.
+    """
+    feeder_q = info["closer_feeder"]["quarter"].capitalize()
+    feeder_tc = info["closer_feeder"]["term_code"]
+    feeder_label = term_code_to_label(feeder_tc)
+    parts = feeder_label.split()
+    feeder_year = parts[1] if len(parts) == 2 else feeder_tc[:4]
+    return sorted(DATA_DIR.glob(f"{feeder_q}_{feeder_year}_FOUN_Forecast*.csv"))
+
+
+def _has_signal(candidate_rows: List[Dict]) -> bool:
+    """True when the rows carry any projected seats (a forecast with signal)."""
+    return bool(candidate_rows) and sum((r.get("projected_seats") or 0) for r in candidate_rows) > 0
+
+
 @app.post("/api/forecast", response_model=ForecastResponse)
 def run_forecast(request: ForecastRequest):
     """Run forecast for specified term using real sequence-based logic.
@@ -501,10 +523,10 @@ def run_forecast(request: ForecastRequest):
         if method not in {"auto", "historical", "sequence"}:
             method = "auto"
 
-        def _has_signal(candidate_rows: List[Dict]) -> bool:
-            return bool(candidate_rows) and sum((r.get("projected_seats") or 0) for r in candidate_rows) > 0
-
-        def _run_sequence() -> Tuple[List[Dict], str]:
+        def _run_sequence() -> Tuple[List[Dict], str, bool]:
+            """Returns (rows, label, used_admits): only the sequence engine
+            folds admits demand into FOUN 110/111, so the admits-snapshot
+            warning must key off this flag, not the display label."""
             seq_rows = run_sequence_forecast(
                 sequence_map_path=sequence_map_path,
                 enrollment_source_path=enrollment_source_path,
@@ -517,17 +539,13 @@ def run_forecast(request: ForecastRequest):
                 demand_metric=demand_metric,
             )
             seq_label = "Sequence-based"
+            uses_admits = True
             # Fallback: if sequence-based returned no results (e.g. Summer has
             # no sequencing data), try the ratio-based method using the closest
             # feeder quarter's existing forecast output.
             if not seq_rows:
                 info = resolve_term_info(target_term)
-                feeder_quarter = info["closer_feeder"]["quarter"].capitalize()
-                feeder_tc = info["closer_feeder"]["term_code"]
-                feeder_label = term_code_to_label(feeder_tc)
-                feeder_year = feeder_label.split()[1] if " " in feeder_label else feeder_tc[:4]
-                feeder_pattern = f"{feeder_quarter}_{feeder_year}_FOUN_Forecast*.csv"
-                feeder_csvs = sorted(DATA_DIR.glob(feeder_pattern))
+                feeder_csvs = _ratio_feeder_csvs(info)
                 historical_path = DATA_DIR / "FOUN_Historical.csv"
                 if feeder_csvs:
                     preferred = [p for p in feeder_csvs
@@ -543,11 +561,13 @@ def run_forecast(request: ForecastRequest):
                         )
                         if seq_rows:
                             seq_label = "Ratio-based"
+                            uses_admits = False
                             break
-            return seq_rows, seq_label
+            return seq_rows, seq_label, uses_admits
 
+        sequence_used_admits = False
         if method == "sequence":
-            rows, method_label = _run_sequence()
+            rows, method_label, sequence_used_admits = _run_sequence()
         else:
             rows = run_sameseason_forecast(
                 master_schedule_path=enrollment_source_path,
@@ -558,9 +578,10 @@ def run_forecast(request: ForecastRequest):
             )
             method_label = "Same-season historical"
             if method == "auto" and not _has_signal(rows):
-                rows, method_label = _run_sequence()
-                if _has_signal(rows):
-                    method_label = f"Auto ({method_label})"
+                rows, seq_label, sequence_used_admits = _run_sequence()
+                # Always attribute the fallback, even when it found no signal:
+                # adjustment-injected rows may still ship under this label.
+                method_label = f"Auto ({seq_label})"
 
         # Apply output-level adjustments to rows. Must run even when the base
         # forecast produced no rows: course+campus "set" adjustments inject rows
@@ -571,7 +592,7 @@ def run_forecast(request: ForecastRequest):
 
         # Guardrail: nothing to forecast means the Master Schedule lacks the
         # data this method needs. Explain it instead of returning zeros.
-        no_data = (not rows) or sum((r.get("projected_seats") or 0) for r in rows) == 0
+        no_data = not _has_signal(rows)
         if no_data:
             _g = resolve_term_info(target_term)
             _closer = term_code_to_label(_g.get("closer_feeder", {}).get("term_code", ""))
@@ -625,14 +646,15 @@ def run_forecast(request: ForecastRequest):
         try:
             from forecast_tool.forecasting.ols_forecast import detect_anomaly
             _crosswalk = load_crosswalk(enrollment_source_path.parent / "sequence_crosswalk_template.csv")
-            _campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
-            for _tc in get_available_terms(enrollment_source_path):
-                for (_campus, _course), _seats in load_term_enrollments(
-                    enrollment_source_path,
-                    _tc,
-                    crosswalk=_crosswalk,
-                    demand_metric=demand_metric,
-                ).items():
+            _campus_label = CAMPUS_DISPLAY
+            # Single pass over the Master Schedule; per-term calls re-parse
+            # the whole file once per term and dominate request latency.
+            for _tc, _totals in load_all_term_enrollments(
+                enrollment_source_path,
+                crosswalk=_crosswalk,
+                demand_metric=demand_metric,
+            ).items():
+                for (_campus, _course), _seats in _totals.items():
                     if str(_course).startswith("FOUN"):
                         _ols_historical.setdefault((_course, _campus_label.get(_campus, _campus)), {})[_tc] = int(_seats)
         except Exception:
@@ -706,7 +728,7 @@ def run_forecast(request: ForecastRequest):
         total_sections = sum(r.sections for r in results)
         adj_count = len(active_adjustments) if active_adjustments else 0
         warnings: List[str] = []
-        if admits_path and "Sequence" in method_label:
+        if admits_path and sequence_used_admits:
             warnings.extend(analyze_admits_registration(admits_path).get("warnings", []))
 
         return ForecastResponse(
@@ -736,7 +758,10 @@ def run_forecast(request: ForecastRequest):
 @app.get("/api/adjustments/{term}")
 def get_adjustments(term: str):
     """List all adjustments for a term."""
-    ta = load_adjustments(DATA_DIR, term)
+    try:
+        ta = load_adjustments(DATA_DIR, term)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
 
 
@@ -756,21 +781,30 @@ def create_adjustment(term: str, request: AdjustmentRequest):
         reason=request.reason,
         source="manual",
     )
-    ta = add_adjustment(DATA_DIR, term, adj)
+    try:
+        ta = add_adjustment(DATA_DIR, term, adj)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustment": adj.model_dump()}
 
 
 @app.put("/api/adjustments/{term}/{adj_id}/toggle")
 def toggle_adj(term: str, adj_id: str):
     """Toggle an adjustment on/off."""
-    ta = toggle_adjustment(DATA_DIR, term, adj_id)
+    try:
+        ta = toggle_adjustment(DATA_DIR, term, adj_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
 
 
 @app.delete("/api/adjustments/{term}/{adj_id}")
 def delete_adjustment(term: str, adj_id: str):
     """Remove an adjustment."""
-    ta = remove_adjustment(DATA_DIR, term, adj_id)
+    try:
+        ta = remove_adjustment(DATA_DIR, term, adj_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"term": ta.term, "adjustments": [a.model_dump() for a in ta.adjustments]}
 
 
@@ -859,24 +893,8 @@ def list_terms():
             "auto": [],
         }
 
-        def _dedupe_sort(items: List[TermOption]) -> List[TermOption]:
-            seen = set()
-            out = []
-            for item in items:
-                if item.termCode not in seen:
-                    seen.add(item.termCode)
-                    out.append(item)
-            out.sort(key=lambda x: x.termCode)
-            return out
-
         def _sequence_has_ratio_fallback(info: Dict) -> bool:
-            feeder_q = info["closer_feeder"]["quarter"].capitalize()
-            feeder_tc = info["closer_feeder"]["term_code"]
-            feeder_label = term_code_to_label(feeder_tc)
-            feeder_parts = feeder_label.split()
-            feeder_year = feeder_parts[1] if len(feeder_parts) == 2 else feeder_tc[:4]
-            pattern = f"{feeder_q}_{feeder_year}_FOUN_Forecast*.csv"
-            return bool(list(DATA_DIR.glob(pattern)))
+            return bool(_ratio_feeder_csvs(info))
 
         for candidate in candidates:
             label = term_code_to_label(candidate)
@@ -902,7 +920,8 @@ def list_terms():
             if historical_ok or sequence_ok:
                 by_method["auto"].append(option)
 
-        by_method = {key: _dedupe_sort(value) for key, value in by_method.items()}
+        # Each candidate appends at most one option per list; only sorting is needed.
+        by_method = {key: sorted(value, key=lambda x: x.termCode) for key, value in by_method.items()}
 
         return TermsResponse(
             available_terms=available,
@@ -1131,7 +1150,7 @@ def run_backtest(request: BacktestRequest):
         master_path = source if source.is_absolute() else PROJECT_ROOT / source
         info = resolve_term_info(request.term)
         crosswalk = load_crosswalk(master_path.parent / "sequence_crosswalk_template.csv")
-        campus_label = {"SAVANNAH": "Savannah", "SCADNOW": "SCADnow", "ATLANTA": "Atlanta"}
+        campus_label = CAMPUS_DISPLAY
 
         actual = {
             (course, campus_label.get(campus, campus)): seats
@@ -1161,12 +1180,21 @@ def run_backtest(request: BacktestRequest):
             ))
 
         def _metrics(items: List[BacktestRow]) -> BacktestMetrics:
+            # Reuse the temporal-CV error math so backtest numbers stay
+            # comparable to the CV error the ensemble weights optimize.
+            import numpy as np
+            from forecast_tool.validation.temporal_cv import compute_mae, compute_mape
+
             actual_total = sum(r.actual for r in items)
             forecast_total = sum(r.forecast for r in items)
             compared = [r for r in items if r.actual > 0 or r.forecast > 0]
-            mae = sum(r.absError for r in compared) / len(compared) if compared else 0.0
-            pct_rows = [abs(r.error / r.actual) * 100 for r in compared if r.actual > 0]
-            mape = sum(pct_rows) / len(pct_rows) if pct_rows else None
+            if compared:
+                actuals = np.asarray([r.actual for r in compared])
+                forecasts = np.asarray([r.forecast for r in compared])
+                mae = compute_mae(actuals, forecasts)
+                mape = compute_mape(actuals, forecasts)
+            else:
+                mae, mape = 0.0, None
             bias = forecast_total - actual_total
             capture = (forecast_total / actual_total) if actual_total > 0 else None
             return BacktestMetrics(
@@ -1210,6 +1238,9 @@ class EnsembleResult(BaseModel):
     projectedSeats: float
     sections: int
     method: str
+    # The season the projection targets (the one following the last observed
+    # term); None when the course fell back to the mixed-series fit.
+    season: Optional[str] = None
     weights: Optional[Dict[str, float]] = None
     cvMape: Optional[float] = None
 
@@ -1284,10 +1315,45 @@ def run_ensemble_forecast(request: EnsembleRequest):
         results = []
         cv_mapes: List[float] = []
 
+        from forecast_tool.data.transformers import date_to_quarter_label
+
+        _SEASON_ORDER = ["winter", "spring", "summer", "fall"]
+
+        def _next_season_subseries(df):
+            """Return (same-season sub-series, season) for the season that
+            follows the last observation. FOUN enrollment is strongly seasonal
+            (Fall in the hundreds, Summer near zero), so fitting a trend or a
+            non-seasonal ARIMA through the mixed sawtooth produces spurious
+            slopes; each season must be projected from its own history. The
+            sub-series ds becomes the calendar year so OLS uses a year axis.
+            """
+            labels = df["ds"].map(lambda d: str(date_to_quarter_label(d)).split()[0].lower())
+            last = labels.iloc[-1]
+            nxt = _SEASON_ORDER[(_SEASON_ORDER.index(last) + 1) % 4]
+            sub = df[labels == nxt]
+            sub = pd.DataFrame({
+                "ds": sub["ds"].map(lambda d: str(d.year)),
+                "y": sub["y"].values,
+            })
+            return sub, nxt
+
+        def _season_aware(fn):
+            """Fit on the same-season sub-series when it has 2+ points; sparse
+            or unrecognizable series fall back to the full mixed series."""
+            def wrapped(df_train, periods_):
+                try:
+                    sub, _ = _next_season_subseries(df_train)
+                except Exception:
+                    sub = None
+                if sub is not None and len(sub) >= 2:
+                    return fn(sub, periods_)
+                return fn(df_train, periods_)
+            return wrapped
+
         forecast_fns = {
-            "ols": forecast_ols,
-            "ets": forecast_ets,
-            "arima": forecast_arima,
+            "ols": _season_aware(forecast_ols),
+            "ets": _season_aware(forecast_ets),
+            "arima": _season_aware(forecast_arima),
         }
 
         for course in sorted(courses):
@@ -1311,6 +1377,12 @@ def run_ensemble_forecast(request: EnsembleRequest):
             # threshold keep the defaults).
             weights_used = dict(OLS_WEIGHTS)
             cv_mape = None
+            try:
+                _sub, season_label = _next_season_subseries(df_ts)
+                if len(_sub) < 2:
+                    season_label = None
+            except Exception:
+                season_label = None
 
             # Optimize weights if requested and enough data
             if request.optimize_weights and len(df_ts) >= 8:
@@ -1354,6 +1426,7 @@ def run_ensemble_forecast(request: EnsembleRequest):
                 projectedSeats=round(projected, 2),
                 sections=sections,
                 method="Ensemble (OLS+ETS+ARIMA)",
+                season=season_label,
                 weights={k: round(v, 3) for k, v in weights_used.items()},
                 cvMape=round(cv_mape, 2) if cv_mape is not None else None,
             ))

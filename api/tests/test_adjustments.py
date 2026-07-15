@@ -288,3 +288,29 @@ def test_injected_row_normalizes_campus_casing():
     )
     rows = apply_output_adjustments([adj], [], capacity=20)
     assert rows[0]["campus"] == "Savannah"
+
+
+def test_term_file_rejects_path_metacharacters(tmp_path):
+    """The term path segment reaches the filesystem; anything outside the
+    safe slug alphabet must be rejected, not resolved."""
+    from adjustments import _term_file
+
+    with pytest.raises(ValueError):
+        _term_file(tmp_path, "../forecast_config")
+    with pytest.raises(ValueError):
+        _term_file(tmp_path, "..")
+    # Normal terms still resolve.
+    assert _term_file(tmp_path, "Spring 2026").name == "spring_2026.json"
+
+
+def test_adjustment_endpoints_reject_traversal_terms(monkeypatch, tmp_path):
+    import main
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    client = TestClient(main.app)
+    r = client.post(
+        "/api/adjustments/%2e%2e",
+        json={"type": "output", "operation": "set", "value": 10},
+    )
+    assert r.status_code == 400

@@ -140,6 +140,35 @@ class TestEnsembleEndpoint:
             r = client.post("/api/forecast/ensemble", json={})
         assert r.status_code == 404
 
+    def test_seasonal_series_forecasts_next_season_not_sawtooth(self):
+        """Enrollment is strongly seasonal (Fall 600s, Summer 40s). The
+        ensemble must forecast the NEXT SEASON (Fall 2025 ~ 660 given the
+        clear +20/year Fall trend) from same-season history, not fit a trend
+        line through the sawtooth (which projects a spurious ~240-420)."""
+        rows = []
+        for i, year in enumerate([2022, 2023, 2024]):
+            for quarter, base in [("winter", 400), ("spring", 300), ("summer", 40), ("fall", 600)]:
+                if year == 2024 and quarter == "fall":
+                    continue  # series ends at Summer 2024, so Fall is next
+                rows.append({
+                    "course_code": "FOUN 110",
+                    "year": year,
+                    "quarter": quarter,
+                    "enrollment": base + i * (20 if quarter == "fall" else 10),
+                })
+        df = pd.DataFrame(rows)
+
+        # Real quarter_to_date and real models: this is a behavior test.
+        with patch("forecast_tool.data.loaders.load_historical_data", return_value=df):
+            body = client.post(
+                "/api/forecast/ensemble",
+                json={"config": {"bufferPercent": 0}},
+            ).json()
+
+        result = next(r for r in body["results"] if r["course"] == "FOUN 110")
+        assert result["season"] == "fall"
+        assert 600 <= result["projectedSeats"] <= 720
+
     def test_cv_mape_reports_mape_metric_from_optimizer(self):
         """cvMape must be computed with the mape metric; reporting the
         optimizer's default RMSE (seat units) under a Mape label misstates
